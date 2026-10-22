@@ -1,0 +1,904 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { PointerEvent as RPointerEvent, ReactNode } from 'react';
+import { useApp } from '../App';
+import { dayKey } from '../lib/agenda';
+import type { PmCard } from '../lib/model';
+import { activeViewId, allStates, COLOR_KEYS, COLORS, FILTER_OPS, formatDate, formatNum, newCol, optsOf, pmId, progress, stateInfo, tableProgress, total, TOTALS, TYPE_ICON, TYPE_LABEL, VIEW_LABEL, pmViews, visibleRows } from '../lib/pm';
+import type { CellVal, Col, ColType, DateVal, Filter, NumFmt, Opt, Phase, Pm, PmOp, PmView, Row, Sort } from '../lib/pm';
+import { cellText, formatFVal, formulaValue, ROLL_FNS, rowTitle, asTimer, blockers, strList, dateColOf, defaultKanban, formatTimer, ruleFor, timerMs } from '../lib/pm';
+import type { Rule } from '../lib/pm';
+import { PmCalendar } from './pm/PmCalendar';
+import { Timeline } from './pm/Timeline';
+import { asTemplate, planImport, toClipboard, toCsv } from '../lib/pmio';
+import type { CsvPlan } from '../lib/pmio';
+import { Kanban, KanbanPicker } from './pm/Kanban';
+import { ImageMenu, ImageThumbs, RelationMenu, RelPills } from './pm/Linked';
+import { checkFormula, FUNCTION_HELP, propsIn } from '../lib/formula';
+import { RowPage } from './pm/RowPage';
+
+type Pop =
+  | { kind: 'col'; col: string; x: number; y: number }
+  | { kind: 'cell'; col: string; row: string; x: number; y: number }
+  | { kind: 'filter' | 'sort' | 'props' | 'addcol'; x: number; y: number }
+  | { kind: 'row'; row: string; x: number; y: number }
+  | { kind: 'more' | 'csv' | 'addview'; x: number; y: number }
+  | { kind: 'view'; id: string; x: number; y: number }
+  | { kind: 'rules'; x: number; y: number }
+  | { kind: 'import'; plan: CsvPlan; name: string; x: number; y: number };
+
+const GRIP = 44;
+
+export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: string | null; onClose: () => void }) {
+  const { state, dispatch } = useApp();
+  const card = state.cards.find((c) => c.id === cardId && c.type === 'pm') as PmCard | undefined;
+  const [pop, setPop] = useState<Pop | null>(null);
+  const [drag, setDrag] = useState<{ kind: 'row' | 'col'; id: string; over: string | null } | null>(null);
+  const [page, setPage] = useState<string | null>(rowId ?? null);
+  const [query, setQuery] = useState('');
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const [pageN, setPageN] = useState(0);
+  const modal = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<string | null>(null);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (pop) setPop(null); else if (page) setPage(null); else onClose(); } };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [pop, page, onClose]);
+  useLayoutEffect(() => {
+    if (pendingFocus.current) { document.getElementById(pendingFocus.current)?.focus(); pendingFocus.current = null; }
+  });
+  if (!card) return null;
+
+  const pm = card.pm;
+  const tags = state.tags;
+  const today = dayKey(new Date());
+  const rows = visibleRows(pm, tags, today, query);
+  const counted = rows.filter((r) => !r.archived);
+  const view = pm.ui?.view ?? 'table';
+  const kanbanBy = pm.ui?.kanban && pm.cols.some((c) => c.id === pm.ui!.kanban!.col) ? pm.ui.kanban : defaultKanban(pm);
+  const archivedCount = pm.rows.filter((r) => r.archived).length;
+  const pageRow = page ? pm.rows.find((r) => r.id === page) ?? null : null;
+  const ruleStyle = (r: Row) => { const rule = ruleFor(pm, r, tags, today); return rule ? ({ ['--rule' as string]: COLORS[rule.color][0], ['--rule-ink' as string]: COLORS[rule.color][1] } as React.CSSProperties) : undefined; };
+  void dateColOf;
+  const cols = pm.cols.filter((c) => !c.hidden);
+  const op = (o: PmOp) => dispatch({ t: 'pm', card: card.id, op: o });
+  const pct = tableProgress(pm);
+  const views = pmViews(pm);
+  const activeId = activeViewId(pm);
+  const taskColor = state.projects.find((p) => p.id === card.project)?.color ?? '#2F6690';
+  const at = (e: { currentTarget: Element }) => {
+    const r = e.currentTarget.getBoundingClientRect(), m = modal.current!.getBoundingClientRect();
+    // Los menús no se salen por la derecha de la ventana (el más ancho mide unos 450 px).
+    return { x: Math.max(8, Math.min(r.left - m.left, m.width - 460)), y: Math.min(r.bottom - m.top + 4, m.height - 120) };
+  };
+  const cellId = (row: string, col: string) => `pm-${row}-${col}`;
+
+  const addRow = (after: string | null = null, focusCol?: string) => {
+    const id = pmId('row');
+    op({ op: 'addRow', id, after });
+    const target = focusCol ?? cols.find((c) => c.type === 'text')?.id;
+    if (target) pendingFocus.current = cellId(id, target);
+  };
+  /** ↑ ↓ y Enter para moverse entre filas en la misma columna. */
+  const nav = (e: React.KeyboardEvent, row: string, col: string) => {
+    const i = rows.findIndex((r) => r.id === row);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+      e.preventDefault();
+      const next = rows[i + (e.key === 'ArrowUp' ? -1 : 1)];
+      if (next) document.getElementById(cellId(next.id, col))?.focus();
+      else if (e.key === 'Enter') addRow(row, col);
+    }
+  };
+
+  /** Arrastrar filas (por el asa) o columnas (por la cabecera). */
+  const startDrag = (e: RPointerEvent, kind: 'row' | 'col', id: string, onClick?: (e: RPointerEvent) => void) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('input, .col-resize')) return;
+    const sx = e.clientX, sy = e.clientY;
+    const target = e.currentTarget;
+    let moved = false;
+    const find = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(kind === 'row' ? '[data-row]' : '[data-col]') as HTMLElement | null;
+      return el ? (kind === 'row' ? el.dataset.row! : el.dataset.col!) : null;
+    };
+    const mv = (ev: PointerEvent) => {
+      if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
+      moved = true;
+      setDrag({ kind, id, over: find(ev) });
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', mv);
+      window.removeEventListener('pointerup', up);
+      setDrag(null);
+      if (!moved) { onClick?.({ ...e, currentTarget: target } as RPointerEvent); return; }
+      const over = find(ev);
+      if (!over || over === id) return;
+      if (kind === 'row') {
+        if (pm.sorts.length) return;
+        const list = pm.rows.map((r) => r.id);
+        const before = list.indexOf(id) < list.indexOf(over) ? list[list.indexOf(over) + 1] ?? null : over;
+        op({ op: 'moveRow', id, before });
+      } else {
+        const list = pm.cols.map((c) => c.id);
+        const before = list.indexOf(id) < list.indexOf(over) ? list[list.indexOf(over) + 1] ?? null : over;
+        op({ op: 'moveCol', id, before });
+      }
+    };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  };
+  const startResize = (e: RPointerEvent, col: Col) => {
+    e.preventDefault(); e.stopPropagation();
+    const sx = e.clientX, w0 = col.w;
+    const th = (e.currentTarget as HTMLElement).closest('th') as HTMLElement;
+    let w = w0;
+    const mv = (ev: PointerEvent) => { w = Math.max(80, Math.min(600, w0 + ev.clientX - sx)); th.style.width = w + 'px'; th.style.minWidth = w + 'px'; };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); if (w !== w0) op({ op: 'patchCol', id: col.id, patch: { w } }); };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  };
+
+  const PAGE = 100;
+  const groupCol = pm.group ? pm.cols.find((c) => c.id === pm.group) ?? null : null;
+  const groupOf = (r: Row) => (groupCol ? cellText(pm, groupCol, r, tags) || 'Sin valor' : '');
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const pageRows = rows.slice(Math.min(pageN, pages - 1) * PAGE, Math.min(pageN, pages - 1) * PAGE + PAGE);
+  const rowEl = (r: Row, ri: number) => (
+                <tr key={r.id} data-row={r.id} style={ruleStyle(r)} className={(ruleFor(pm, r, tags, today) ? 'ruled ' : '') + (ruleFor(pm, r, tags, today)?.bold ? 'rule-bold ' : '') + (drag?.kind === 'row' && drag.over === r.id ? 'drop' : drag?.kind === 'row' && drag.id === r.id ? 'dragging' : '') + (r.archived ? ' archived' : '') + (page === r.id ? ' paged' : '')}>
+                  <td className="pm-grip" title="Arrastra para mover · clic para opciones" onPointerDown={(e) => startDrag(e, 'row', r.id, (ev) => setPop({ kind: 'row', row: r.id, ...at(ev) }))}>
+                    <span className="small muted">{ri + 1}</span><span className="grip-dots">⠿</span>
+                  </td>
+                  {cols.map((c, k) => (
+                    <td key={c.id} className={k === 0 ? 'sticky' : ''} style={{ left: k === 0 ? GRIP : undefined }}>
+                      {k === 0 && (() => { const bl = blockers(pm, r).length > 0; return <button className={'open-page' + (bl ? ' blocked' : '')} title={bl ? 'Bloqueada: espera a otra fila · abrir página' : 'Abrir la página de la fila'} aria-label="Abrir página" onClick={() => setPage(r.id)}>{bl ? '⛔' : '↗'}</button>; })()}
+                      <Cell pm={pm} col={c} row={r} tags={tags} id={cellId(r.id, c.id)} set={(v) => op({ op: 'cell', row: r.id, col: c.id, value: v })} onKey={(e) => nav(e, r.id, c.id)} timer={(a) => op({ op: 'timer', row: r.id, col: c.id, action: a, now: Date.now() })}
+                        open={(e) => setPop({ kind: 'cell', col: c.id, row: r.id, ...at(e) })} />
+                    </td>
+                  ))}
+                </tr>
+  );
+
+  const nFilters = pm.filters.length, nSorts = pm.sorts.length;
+
+  return (
+    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <section ref={modal} className="pm-modal" style={{ ['--task' as string]: taskColor }} role="dialog" aria-label={'Tabla PM · ' + (card.title || 'Sin título')} onMouseDown={(e) => { if (pop && !(e.target as HTMLElement).closest('.pm-pop, [data-pop]')) setPop(null); }}>
+        <header className="pm-head">
+          <input className="pm-title" value={card.title} placeholder="Sin título" aria-label="Título de la tabla" onChange={(e) => dispatch({ t: 'patchCard', id: card.id, patch: { title: e.target.value } })} />
+          {pct !== null && <div className="pm-pct"><div className="progress"><span style={{ width: pct + '%' }} /></div><b>{pct}%</b></div>}
+          <input className="pm-search" type="search" value={query} placeholder="Buscar en esta tabla…" aria-label="Buscar en esta tabla" onChange={(e) => { setQuery(e.target.value); setPageN(0); }} />
+          <button data-pop className="tool" aria-label="Opciones de la tabla" title="Opciones de la tabla" onClick={(e) => setPop({ kind: 'more', ...at(e) })}>⋯ Opciones</button>
+          <button className="icon-btn" aria-label="Cerrar" title="Cerrar (Esc)" onClick={onClose}>✕</button>
+        </header>
+        <div className="pm-tabs" role="tablist">
+          {views.map((v) => (
+            <div key={v.id} className={'pm-tab' + (v.id === activeId ? ' on' : '')} draggable
+              onDragStart={(e) => e.dataTransfer.setData('text/pm-view', v.id)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { const id = e.dataTransfer.getData('text/pm-view'); if (id && id !== v.id) { const i = views.findIndex((x) => x.id === id), j = views.findIndex((x) => x.id === v.id); op({ op: 'viewMove', id, before: i < j ? views[j + 1]?.id ?? null : v.id }); } }}>
+              <button role="tab" aria-selected={v.id === activeId} onClick={() => op({ op: 'viewSelect', id: v.id })} onDoubleClick={(e) => setPop({ kind: 'view', id: v.id, ...at(e) })}>{v.name}</button>
+              <button data-pop className="tab-more" aria-label={'Menú de la vista ' + v.name} onClick={(e) => setPop({ kind: 'view', id: v.id, ...at(e) })}>▾</button>
+            </div>
+          ))}
+          <button data-pop className="pm-tab-add" aria-label="Añadir vista" title="Añadir vista" onClick={(e) => setPop({ kind: 'addview', ...at(e) })}>+</button>
+        </div>
+        <div className="pm-toolbar">
+          {view === 'kanban' && <KanbanPicker pm={pm} by={kanbanBy} onChange={(b) => op({ op: 'ui', patch: { kanban: b } })} />}
+          <button data-pop className={'tool' + (nFilters ? ' on' : '')} onClick={(e) => setPop({ kind: 'filter', ...at(e) })}>Filtros{nFilters ? ' · ' + nFilters : ''}</button>
+          <button data-pop className={'tool' + (nSorts || pm.group ? ' on' : '')} onClick={(e) => setPop({ kind: 'sort', ...at(e) })}>Ordenar y agrupar{nSorts + (pm.group ? 1 : 0) ? ' · ' + (nSorts + (pm.group ? 1 : 0)) : ''}</button>
+          <span className="grow small muted">{(() => { const base = pm.ui?.showArchived ? pm.rows.length : pm.rows.length - archivedCount; const n = (x: number) => x + (x === 1 ? ' fila' : ' filas'); return rows.length === base ? n(base) : `${rows.length} de ${n(base)}`; })()}</span>
+          <button className={'tool' + (pm.ui?.showArchived ? ' on' : '')} aria-pressed={!!pm.ui?.showArchived} onClick={() => op({ op: 'ui', patch: { showArchived: !pm.ui?.showArchived } })}>Archivadas · {archivedCount}</button>
+          <button data-pop className="tool" onClick={(e) => setPop({ kind: 'addcol', ...at(e) })}>+ Nueva columna</button>
+          <button className="primary" onClick={() => addRow(null)}>+ Nueva fila</button>
+        </div>
+        <div className="pm-body">
+        {view === 'gallery' ? (
+          <div className="pm-scroll"><Gallery pm={pm} rows={rows} tags={tags} op={op} onOpen={setPage} today={today} /></div>
+        ) : view === 'timeline' ? (
+          <Timeline pm={pm} rows={rows} tags={tags} op={op} onOpen={setPage} today={today} />
+        ) : view === 'calendar' ? (
+          <div className="pm-scroll"><PmCalendar pm={pm} rows={rows} tags={tags} op={op} onOpen={setPage} today={today} /></div>
+        ) : view === 'kanban' && kanbanBy ? (
+          <div className="pm-scroll"><Kanban pm={pm} rows={rows} by={kanbanBy} tags={tags} op={op} onOpen={setPage}
+            onAdd={(value, colId) => { const id = pmId('row'); op({ op: 'addRow', id, cells: { [colId]: value as CellVal } }); setPage(id); }} /></div>
+        ) : (
+        <div className="pm-scroll">
+          <table className="pm-grid">
+            <thead>
+              <tr>
+                <th className="pm-grip-h" style={{ width: GRIP, minWidth: GRIP }} />
+                {cols.map((c, k) => {
+                  const sort = pm.sorts.find((s) => s.col === c.id);
+                  return (
+                    <th key={c.id} data-col={c.id} className={(k === 0 ? 'sticky ' : '') + (drag?.kind === 'col' && drag.over === c.id ? 'drop' : '')} style={{ width: c.w, minWidth: c.w, left: k === 0 ? GRIP : undefined }}
+                      onPointerDown={(e) => startDrag(e, 'col', c.id, (ev) => setPop({ kind: 'col', col: c.id, ...at(ev) }))}>
+                      <span className="th-in" data-pop><span className="th-icon">{TYPE_ICON[c.type]}</span><span className="grow ellipsis">{c.name || 'Sin nombre'}</span>{sort && <span className="small">{sort.dir === 'asc' ? '↑' : '↓'}</span>}<span className="small muted">▾</span></span>
+                      <span className="col-resize" onPointerDown={(e) => startResize(e, c)} aria-hidden="true" />
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const out: ReactNode[] = [];
+                let last: string | null = null;
+                const start = pageN * PAGE;
+                pageRows.forEach((r, k) => {
+                  if (groupCol) {
+                    const g = groupOf(r);
+                    if (g !== last) {
+                      last = g;
+                      const n = rows.filter((x) => groupOf(x) === g).length;
+                      out.push(<tr key={'g-' + g} className="pm-group"><td colSpan={cols.length + 1}><button className="link" aria-expanded={!folded.has(g)} onClick={() => setFolded((f) => { const nx = new Set(f); if (nx.has(g)) nx.delete(g); else nx.add(g); return nx; })}>{folded.has(g) ? '▸' : '▾'} {g} <span className="muted">· {n}</span></button></td></tr>);
+                    }
+                    if (folded.has(g)) return;
+                  }
+                  out.push(rowEl(r, start + k));
+                });
+                return out;
+              })()}
+              {!rows.length && <tr><td colSpan={cols.length + 1} className="pm-empty">{pm.rows.length ? 'Ninguna fila cumple los filtros.' : 'Añade la primera fila con «+ Nueva fila».'}</td></tr>}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td className="pm-grip-h small muted">Total</td>
+                {cols.map((c, k) => (
+                  <td key={c.id} className={k === 0 ? 'sticky' : ''} style={{ left: k === 0 ? GRIP : undefined }}>
+                    <div className="pm-total-cell">
+                      {c.total ? <><span className="pm-total-fn">{TOTALS[c.type].find(([v]) => v === c.total)?.[1]}</span><b>{total(pm, c, counted, tags, today)}</b></> : <span className="pm-total-fn hint">Calcular</span>}
+                      <select className="pm-total" value={c.total ?? ''} aria-label={'Total de ' + c.name} onChange={(e) => op({ op: 'patchCol', id: c.id, patch: { total: e.target.value as Col['total'] } })}>
+                        {TOTALS[c.type].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          </table>
+          {pages > 1 && <div className="row pm-pages"><button className="tool small-btn" disabled={pageN === 0} onClick={() => setPageN(pageN - 1)}>‹ Anterior</button><span className="small muted">Filas {pageN * PAGE + 1}–{Math.min(rows.length, pageN * PAGE + PAGE)} de {rows.length}</span><button className="tool small-btn" disabled={pageN >= pages - 1} onClick={() => setPageN(pageN + 1)}>Siguiente ›</button></div>}
+        </div>
+        )}
+        {pageRow && (
+          <RowPage cardId={card.id} pm={pm} row={pageRow} tags={tags} op={op} onClose={() => setPage(null)} onOpenRow={setPage}
+            cell={(c) => <Cell pm={pm} col={c} row={pageRow} tags={tags} id={'page-' + c.id} set={(v) => op({ op: 'cell', row: pageRow.id, col: c.id, value: v })} onKey={() => undefined} timer={(a) => op({ op: 'timer', row: pageRow.id, col: c.id, action: a, now: Date.now() })}
+              open={(e) => setPop({ kind: 'cell', col: c.id, row: pageRow.id, ...at(e) })} />} />
+        )}
+        </div>
+        {pop && <Popover pop={pop} pm={pm} card={card} close={() => setPop(null)} op={op} rows={rows} archived={archivedCount} openImport={(plan, name) => setPop({ kind: 'import', plan, name, x: 0, y: 0 })} openPage={(id) => { setPage(id); setPop(null); }} openPop={(k, id) => { const x = pop.kind === 'more' ? Math.max(8, (modal.current?.getBoundingClientRect().width ?? 800) - 460) : (pop as { x: number }).x; const y = (pop as { y: number }).y; setPop(k === 'col' ? { kind: 'col', col: id!, x, y } : { kind: k, x, y }); }} />}
+      </section>
+    </div>
+  );
+}
+
+function Pills({ list }: { list: { name: string; color: string }[] }) {
+  return <>{list.map((o, i) => { const [bg, fg] = COLORS[o.color] ?? COLORS.gray; return <span key={i} className="pill" style={{ background: bg, color: fg }}>{o.name}</span>; })}</>;
+}
+
+function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefined }: { pm: Pm; col: Col; row: Row; tags: Opt[]; id: string; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; open: (e: React.MouseEvent) => void; timer?: (a: 'start' | 'stop' | 'reset') => void }) {
+  const v = row.cells[col.id];
+  switch (col.type) {
+    case 'text':
+      return <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''} onChange={(e) => set(e.target.value)} onKeyDown={onKey} aria-label={col.name} />;
+    case 'number':
+      return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} />;
+    case 'formula': {
+      const r = formulaValue(pm, col, row, tags);
+      return r.error ? <span className="pm-formula err" title={r.error}>⚠ Error</span> : <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')}>{formatFVal(col, r.value)}</span>;
+    }
+    case 'rollup':
+      return <span className="pm-formula num">{cellText(pm, col, row, tags)}</span>;
+    case 'relation':
+      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}><RelPills v={v} /></button>;
+    case 'image':
+      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}><ImageThumbs v={v} /></button>;
+    case 'timer':
+      return <TimerCell id={id} col={col} v={v} onAction={(a) => timer(a)} />;
+    case 'checkbox':
+      return <label className="pm-check"><input id={id} type="checkbox" checked={!!v} onChange={() => set(!v)} onKeyDown={onKey} aria-label={col.name} /></label>;
+    case 'progress': {
+      const p = progress(pm, col, row);
+      return <div className="pm-prog"><div className="progress"><span style={{ width: p + '%', background: p >= 100 ? '#2F7D4F' : undefined }} /></div><span className="small">{p}%</span></div>;
+    }
+    case 'date': {
+      const d = v && typeof v === 'object' && !Array.isArray(v) ? (v as DateVal) : null;
+      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}>{d?.start ? formatDate(d) : <span className="muted">—</span>}</button>;
+    }
+    default: {
+      let list: { name: string; color: string }[] = [];
+      if (col.type === 'status') { const si = stateInfo(col, v); if (si) list = [{ name: si.st.name, color: si.ph.color }]; }
+      else { const opts = optsOf(col, tags); const ids = col.type === 'multi' ? (Array.isArray(v) ? v : []) : typeof v === 'string' ? [v] : []; list = ids.map((x) => opts.find((o) => o.id === x)).filter((o): o is Opt => !!o); }
+      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}>{list.length ? <Pills list={list} /> : <span className="muted">—</span>}</button>;
+    }
+  }
+}
+
+function NumberCell({ id, col, v, set, onKey }: { id: string; col: Col; v: number | null; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void }) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input id={id} className="pm-in num" inputMode="decimal" aria-label={col.name}
+      value={text ?? (v === null ? '' : formatNum(col, v))}
+      placeholder={col.fmt === 'eur' ? '€' : col.fmt === 'h' ? 'h' : ''}
+      title={v === null ? '' : formatNum(col, v)}
+      onFocus={() => setText(v === null ? '' : String(v).replace('.', ','))}
+      onChange={(e) => { setText(e.target.value); const n = parseFloat(e.target.value.replace(/\s/g, '').replace(',', '.')); set(e.target.value.trim() === '' || isNaN(n) ? null : n); }}
+      onBlur={() => setText(null)}
+      onKeyDown={onKey} />
+  );
+}
+
+function Popover({ pop, pm, card, close, op, rows, openImport, openPage, openPop }: { openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void; pop: Pop; pm: Pm; card: PmCard; close: () => void; op: (o: PmOp) => void; rows: Row[]; archived: number; openImport: (plan: CsvPlan, name: string) => void; openPage: (id: string) => void }) {
+  const style = pop.kind === 'more' ? { right: 16, top: pop.y } : { left: Math.max(8, pop.x), top: pop.y };
+  if (pop.kind === 'import') return <div className="pm-pop menu import" role="dialog" aria-label="Importar CSV"><ImportMenu pm={pm} card={card} plan={pop.plan} name={pop.name} close={close} /></div>;
+  let body: ReactNode = null;
+  if (pop.kind === 'more') body = <OptionsMenu card={card} close={close} openPop={openPop} />;
+  if (pop.kind === 'csv') body = <CsvMenu pm={pm} card={card} rows={rows} op={op} close={close} openImport={openImport} />;
+  if (pop.kind === 'view') body = <ViewMenu pm={pm} id={pop.id} op={op} close={close} />;
+  if (pop.kind === 'addview') body = <AddViewMenu op={op} close={close} />;
+  if (pop.kind === 'col') body = <ColMenu col={pm.cols.find((c) => c.id === pop.col)!} pm={pm} card={card} close={close} op={op} />;
+  if (pop.kind === 'cell') body = <CellMenu pm={pm} col={pm.cols.find((c) => c.id === pop.col)!} row={pm.rows.find((r) => r.id === pop.row)!} card={card} close={close} op={op} openPage={openPage} openCol={(id) => openPop('col', id)} />;
+  if (pop.kind === 'filter') body = <FilterMenu pm={pm} op={op} />;
+  if (pop.kind === 'sort') body = <SortMenu pm={pm} op={op} />;
+  if (pop.kind === 'rules') body = <RulesMenu pm={pm} op={op} />;
+  if (pop.kind === 'props') body = <PropsMenu pm={pm} op={op} />;
+  if (pop.kind === 'addcol') body = <AddColMenu pm={pm} op={op} close={close} />;
+  if (pop.kind === 'row') body = <RowMenu pm={pm} row={pop.row} op={op} close={close} openPage={openPage} />;
+  if (!body || (pop.kind === 'col' && !pm.cols.some((c) => c.id === pop.col)) || (pop.kind === 'cell' && !pm.rows.some((r) => r.id === pop.row))) return null;
+  return <div className={'pm-pop menu ' + pop.kind} style={style}>{body}</div>;
+}
+
+function ColMenu({ col, pm, card, close, op }: { col: Col; pm: Pm; card: PmCard; close: () => void; op: (o: PmOp) => void }) {
+  const { state, dispatch } = useApp();
+  const [confirm, setConfirm] = useState(false);
+  const patch = (p: Partial<Col>) => op({ op: 'patchCol', id: col.id, patch: p });
+  const i = pm.cols.findIndex((c) => c.id === col.id);
+  const sort = (dir: Sort['dir']) => op({ op: 'sorts', sorts: [{ col: col.id, dir }, ...pm.sorts.filter((s) => s.col !== col.id)] });
+  return (
+    <>
+      <input autoFocus value={col.name} aria-label="Nombre de la columna" onChange={(e) => patch({ name: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && close()} />
+      <label className="menu-label">Tipo
+        <select value={col.type} onChange={(e) => dispatch({ t: 'pmConvert', card: card.id, col: col.id, type: e.target.value as ColType })}>
+          {(Object.keys(TYPE_LABEL) as ColType[]).map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
+        </select>
+      </label>
+      {col.type === 'number' && (
+        <div className="seg">{([['num', '123'], ['eur', '€'], ['pct', '%'], ['h', 'h']] as [NumFmt, string][]).map(([f, l]) => <button key={f} className={col.fmt === f ? 'on' : ''} onClick={() => patch({ fmt: f })}>{l}</button>)}</div>
+      )}
+      {(col.type === 'select' || col.type === 'multi') && (
+        <OptionsEditor opts={optsOf(col, state.tags)} global={!!col.global} onChange={(opts) => (col.global ? dispatch({ t: 'tags', tags: opts }) : patch({ opts }))} />
+      )}
+      {col.type === 'multi' && (
+        <label className="check-line small"><input type="checkbox" checked={!!col.global} onChange={() => patch(col.global ? { global: false, opts: [] } : { global: true })} /> Usar las etiquetas globales (compartidas por todas las tablas)</label>
+      )}
+      {col.type === 'status' && <PhasesEditor phases={col.phases ?? []} onChange={(phases) => patch({ phases })} />}
+      {col.type === 'formula' && <FormulaEditor pm={pm} col={col} patch={patch} />}
+      {(col.type === 'formula' || col.type === 'rollup') && (
+        <div className="seg">{([['num', '123'], ['eur', '€'], ['pct', '%'], ['h', 'h']] as [NumFmt, string][]).map(([f, l]) => <button key={f} className={col.fmt === f ? 'on' : ''} onClick={() => patch({ fmt: f })}>{l}</button>)}</div>
+      )}
+      {col.type === 'relation' && (
+        <label className="menu-label">Tabla enlazada (pestaña «Interna»)
+          <select value={col.target ?? ''} onChange={(e) => patch({ target: e.target.value || null })}>
+            <option value="">— Ninguna (solo enlaces externos) —</option>
+            {state.cards.filter((c) => c.type === 'pm' && !c.trashed).map((c) => <option key={c.id} value={c.id}>{c.title || 'Tabla sin título'}{c.id === card.id ? ' (esta tabla)' : ''}</option>)}
+          </select>
+          <span className="small muted">En la pestaña «Externa» se puede enlazar cualquier tarea principal, tarjeta o fila.</span>
+        </label>
+      )}
+      {col.type === 'rollup' && <RollupEditor pm={pm} col={col} patch={patch} />}
+      {col.type === 'progress' && (
+        <label className="menu-label">Calcular desde
+          <select value={col.source ?? ''} onChange={(e) => patch({ source: e.target.value || undefined })}>
+            <option value="">—</option>
+            {pm.cols.filter((c) => c.type === 'status').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+      )}
+      <div className="menu-sep" />
+      <button onClick={() => { sort('asc'); close(); }}>↑ Ordenar ascendente</button>
+      <button onClick={() => { sort('desc'); close(); }}>↓ Ordenar descendente</button>
+      <button onClick={() => { op({ op: 'addCol', col: newCol('text', pm), at: i }); close(); }}>⇤ Insertar columna a la izquierda</button>
+      <button onClick={() => { op({ op: 'addCol', col: newCol('text', pm), at: i + 1 }); close(); }}>⇥ Insertar columna a la derecha</button>
+      <button onClick={() => { patch({ hidden: true }); close(); }}>Ocultar columna</button>
+      {pm.cols.length > 1 && (confirm
+        ? <div className="stack small-gap"><span className="small">¿Eliminar «{col.name}» y todos sus datos?</span><div className="row"><button className="tool small-btn" onClick={() => setConfirm(false)}>Cancelar</button><button className="danger small-btn" onClick={() => { op({ op: 'removeCol', id: col.id }); close(); }}>Eliminar</button></div></div>
+        : <button className="danger-text" onClick={() => setConfirm(true)}>Eliminar columna</button>)}
+    </>
+  );
+}
+
+function OptionsEditor({ opts, global, onChange }: { opts: Opt[]; global: boolean; onChange: (o: Opt[]) => void }) {
+  const set = (i: number, p: Partial<Opt>) => onChange(opts.map((o, k) => (k === i ? { ...o, ...p } : o)));
+  return (
+    <div className="opt-editor">
+      <span className="menu-label">{global ? 'Etiquetas globales' : 'Opciones'}</span>
+      {opts.map((o, i) => (
+        <div key={o.id} className="row">
+          <button className="swatch" style={{ background: COLORS[o.color]?.[1] }} aria-label="Cambiar color" title="Cambiar color" onClick={() => set(i, { color: COLOR_KEYS[(COLOR_KEYS.indexOf(o.color) + 1) % COLOR_KEYS.length] })} />
+          <input value={o.name} aria-label="Nombre de la opción" onChange={(e) => set(i, { name: e.target.value })} />
+          <button className="icon-btn small" aria-label="Borrar opción" onClick={() => onChange(opts.filter((_, k) => k !== i))}>×</button>
+        </div>
+      ))}
+      <button className="link small" onClick={() => onChange([...opts, { id: pmId(global ? 'tag' : 'o'), name: 'Opción ' + (opts.length + 1), color: COLOR_KEYS[opts.length % COLOR_KEYS.length] }])}>+ Añadir opción</button>
+    </div>
+  );
+}
+
+function PhasesEditor({ phases, onChange }: { phases: Phase[]; onChange: (p: Phase[]) => void }) {
+  const setPh = (i: number, p: Partial<Phase>) => onChange(phases.map((ph, k) => (k === i ? { ...ph, ...p } : ph)));
+  return (
+    <div className="opt-editor">
+      <span className="menu-label">Fases y estados (el último estado cuenta como terminado)</span>
+      {phases.map((ph, i) => (
+        <div key={ph.id} className="phase">
+          <div className="row">
+            <button className="swatch" style={{ background: COLORS[ph.color]?.[1] }} aria-label="Color de la fase" onClick={() => setPh(i, { color: COLOR_KEYS[(COLOR_KEYS.indexOf(ph.color) + 1) % COLOR_KEYS.length] })} />
+            <input className="phase-name" value={ph.name} aria-label="Nombre de la fase" onChange={(e) => setPh(i, { name: e.target.value })} />
+            {phases.length > 1 && <button className="icon-btn small" aria-label="Borrar fase" onClick={() => onChange(phases.filter((_, k) => k !== i))}>×</button>}
+          </div>
+          {ph.states.map((st, j) => (
+            <div key={st.id} className="row state">
+              <input value={st.name} aria-label="Nombre del estado" onChange={(e) => setPh(i, { states: ph.states.map((x, k) => (k === j ? { ...x, name: e.target.value } : x)) })} />
+              {ph.states.length > 1 && <button className="icon-btn small" aria-label="Borrar estado" onClick={() => setPh(i, { states: ph.states.filter((_, k) => k !== j) })}>×</button>}
+            </div>
+          ))}
+          <button className="link small state" onClick={() => setPh(i, { states: [...ph.states, { id: pmId('st'), name: 'Estado nuevo' }] })}>+ Estado</button>
+        </div>
+      ))}
+      <button className="link small" onClick={() => onChange([...phases, { id: pmId('ph'), name: 'Fase nueva', color: COLOR_KEYS[phases.length % COLOR_KEYS.length], states: [{ id: pmId('st'), name: 'Estado nuevo' }] }])}>+ Fase</button>
+    </div>
+  );
+}
+
+function CellMenu({ pm, col, row, card, close, op, openPage, openCol }: { pm: Pm; col: Col; row: Row; card: PmCard; close: () => void; op: (o: PmOp) => void; openPage: (id: string) => void; openCol: (id: string) => void }) {
+  const { state, dispatch } = useApp();
+  const [q, setQ] = useState('');
+  const v = row.cells[col.id];
+  const set = (val: CellVal) => op({ op: 'cell', row: row.id, col: col.id, value: val });
+  if (col.type === 'relation') return <RelationMenu pm={pm} card={card.id} col={col} row={row} set={set} close={close} onOpenRow={openPage} />;
+  if (col.type === 'image') return <ImageMenu card={card.id} col={col} row={row} />;
+  if (col.type === 'date') {
+    const d = v && typeof v === 'object' && !Array.isArray(v) ? (v as DateVal) : { start: '', end: '' };
+    return <DatePick value={d} onChange={set} onClose={close} />;
+  }
+  if (col.type === 'status') {
+    return (
+      <>
+        {(col.phases ?? []).map((ph) => (
+          <div key={ph.id} className="status-group">
+            <span className="menu-label">{ph.name}</span>
+            {ph.states.map((st) => { const [bg, fg] = COLORS[ph.color] ?? COLORS.gray; return <button key={st.id} className={v === st.id ? 'on' : ''} onClick={() => { set(st.id); close(); }}><span className="pill" style={{ background: bg, color: fg }}>{st.name}</span>{v === st.id && ' ✓'}</button>; })}
+          </div>
+        ))}
+        {v && <button className="link small" onClick={() => { set(null); close(); }}>Quitar estado</button>}
+      </>
+    );
+  }
+  const opts = optsOf(col, state.tags);
+  const multi = col.type === 'multi';
+  const chosen = multi ? strList(v) : typeof v === 'string' ? [v] : [];
+  const fq = q.trim().toLowerCase();
+  const shown = opts.filter((o) => !fq || o.name.toLowerCase().includes(fq));
+  const pick = (id: string) => {
+    if (multi) set(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id]);
+    else { set(chosen[0] === id ? null : id); close(); }
+  };
+  const create = () => {
+    const o: Opt = { id: pmId(col.global ? 'tag' : 'o'), name: q.trim(), color: COLOR_KEYS[opts.length % COLOR_KEYS.length] };
+    if (col.global) dispatch({ t: 'tags', tags: [...state.tags, o] });
+    else op({ op: 'patchCol', id: col.id, patch: { opts: [...opts, o] } });
+    setQ('');
+    pick(o.id);
+  };
+  return (
+    <>
+      <input autoFocus value={q} placeholder="Buscar o crear…" aria-label="Buscar o crear"
+        onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { if (shown[0] && shown[0].name.toLowerCase() === fq) pick(shown[0].id); else if (q.trim()) create(); } }} />
+      {shown.map((o) => { const [bg, fg] = COLORS[o.color] ?? COLORS.gray; return <button key={o.id} className={chosen.includes(o.id) ? 'on' : ''} onClick={() => pick(o.id)}><span className="pill" style={{ background: bg, color: fg }}>{o.name}</span>{chosen.includes(o.id) && ' ✓'}</button>; })}
+      {q.trim() && !opts.some((o) => o.name.toLowerCase() === fq) && <button onClick={create}>+ Crear «{q.trim()}»</button>}
+      <div className="menu-sep" />
+      {chosen.length > 0 && <button onClick={() => { set(multi ? [] : null); close(); }}>Quitar</button>}
+      <button onClick={() => openCol(col.id)}>Editar opciones</button>
+    </>
+  );
+}
+
+function FilterMenu({ pm, op }: { pm: Pm; op: (o: PmOp) => void }) {
+  const set = (filters: Filter[], conj = pm.conj) => op({ op: 'filters', filters, conj });
+  const add = () => { const c = pm.cols[0]; set([...pm.filters, { id: pmId('f'), col: c.id, op: FILTER_OPS[c.type][0][0], val: '' }]); };
+  return (
+    <div className="stack small-gap filter-menu">
+      {pm.filters.length > 1 && <div className="seg">{(['and', 'or'] as const).map((c) => <button key={c} className={pm.conj === c ? 'on' : ''} onClick={() => set(pm.filters, c)}>{c === 'and' ? 'Todas (Y)' : 'Cualquiera (O)'}</button>)}</div>}
+      {pm.filters.map((f, i) => (
+        <div key={f.id} className="row">
+          <Condition pm={pm} f={f} onChange={(p) => set(pm.filters.map((x, k) => (k === i ? { ...x, ...p } : x)))} />
+          <button className="icon-btn small" aria-label="Quitar filtro" onClick={() => set(pm.filters.filter((_, k) => k !== i))}>×</button>
+        </div>
+      ))}
+      <div className="row"><button className="link small" onClick={add}>+ Añadir filtro</button><span className="grow" />{pm.filters.length > 0 && <button className="link small" onClick={() => set([])}>Quitar todos</button>}</div>
+    </div>
+  );
+}
+
+/** Columna · condición · valor (se usa en los filtros y en las reglas de formato). */
+function Condition({ pm, f, onChange }: { pm: Pm; f: Filter; onChange: (p: Partial<Filter>) => void }) {
+  const { state } = useApp();
+  const col = pm.cols.find((c) => c.id === f.col) ?? pm.cols[0];
+  const needs = !['empty', 'nempty', 'checked', 'unchecked', 'overdue'].includes(f.op);
+  let valCtl: ReactNode = <input value={f.val} aria-label="Valor" onChange={(e) => onChange({ val: e.target.value })} />;
+  if (col.type === 'select' || col.type === 'multi') valCtl = <select value={f.val} aria-label="Valor" onChange={(e) => onChange({ val: e.target.value })}><option value="">Elige…</option>{optsOf(col, state.tags).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>;
+  if (col.type === 'status') valCtl = <select value={f.val} aria-label="Valor" onChange={(e) => onChange({ val: e.target.value })}><option value="">Elige…</option>{f.op === 'phase' ? (col.phases ?? []).map((ph) => <option key={ph.id} value={ph.id}>{ph.name}</option>) : allStates(col).map((x) => <option key={x.st.id} value={x.st.id}>{x.ph.name} · {x.st.name}</option>)}</select>;
+  if (col.type === 'date') valCtl = <input type="date" value={f.val} aria-label="Valor" onChange={(e) => onChange({ val: e.target.value })} />;
+  return (
+    <>
+      <select value={col.id} aria-label="Columna" onChange={(e) => { const c = pm.cols.find((x) => x.id === e.target.value)!; onChange({ col: c.id, op: FILTER_OPS[c.type][0][0], val: '' }); }}>{pm.cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      <select value={f.op} aria-label="Condición" onChange={(e) => onChange({ op: e.target.value as Filter['op'], val: '' })}>{FILTER_OPS[col.type].map(([o, l]) => <option key={o} value={o}>{l}</option>)}</select>
+      {needs ? valCtl : <span className="grow" />}
+    </>
+  );
+}
+
+function RulesMenu({ pm, op }: { pm: Pm; op: (o: PmOp) => void }) {
+  const rules = pm.rules ?? [];
+  const set = (r: Rule[]) => op({ op: 'rules', rules: r });
+  const move = (i: number, d: -1 | 1) => { const r = rules.slice(); const [x] = r.splice(i, 1); r.splice(i + d, 0, x); set(r); };
+  return (
+    <div className="stack small-gap filter-menu">
+      <span className="small muted">Formato condicional: la primera regla que se cumple manda.</span>
+      {rules.map((r, i) => (
+        <div key={r.id} className="rule">
+          <div className="row">
+            <Condition pm={pm} f={r.filter} onChange={(p) => set(rules.map((x, k) => (k === i ? { ...x, filter: { ...x.filter, ...p } } : x)))} />
+            <button className="icon-btn small" aria-label="Quitar regla" onClick={() => set(rules.filter((_, k) => k !== i))}>×</button>
+          </div>
+          <div className="row">
+            {COLOR_KEYS.map((c) => <button key={c} className={'swatch' + (r.color === c ? ' on' : '')} style={{ background: COLORS[c][1] }} aria-label={'Color ' + c} onClick={() => set(rules.map((x, k) => (k === i ? { ...x, color: c } : x)))} />)}
+            <label className="check-line small"><input type="checkbox" checked={r.bold} onChange={() => set(rules.map((x, k) => (k === i ? { ...x, bold: !x.bold } : x)))} /> Negrita</label>
+            <span className="grow" />
+            <button className="icon-btn small" aria-label="Subir prioridad" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+            <button className="icon-btn small" aria-label="Bajar prioridad" disabled={i === rules.length - 1} onClick={() => move(i, 1)}>↓</button>
+          </div>
+        </div>
+      ))}
+      {!rules.length && <span className="small muted">Sugerencias</span>}
+      {!rules.length && (() => {
+        const date = pm.cols.find((x) => x.type === 'date'), st = pm.cols.find((x) => x.type === 'status');
+        const mk = (col: Col, o: Rule['filter']['op'], color: Rule['color']): Rule => ({ id: pmId('rule'), filter: { id: pmId('f'), col: col.id, op: o, val: '' }, color, bold: false });
+        return (
+          <div className="row wrap">
+            {date && <button className="tool small-btn" onClick={() => set([...rules, mk(date, 'overdue', 'red')])}>Vencidas en rojo</button>}
+            {st && <button className="tool small-btn" onClick={() => set([...rules, { ...mk(st, 'phase', 'green'), filter: { id: pmId('f'), col: st.id, op: 'phase', val: st.phases?.[st.phases.length - 1]?.id ?? '' } }])}>Completadas en verde</button>}
+            {st && <button className="tool small-btn" onClick={() => set([...rules, mk(st, 'empty', 'gray')])}>Sin estado en gris</button>}
+          </div>
+        );
+      })()}
+      <button className="link small" onClick={() => { const c = pm.cols.find((x) => x.type === 'date') ?? pm.cols[0]; set([...rules, { id: pmId('rule'), filter: { id: pmId('f'), col: c.id, op: FILTER_OPS[c.type][0][0], val: '' }, color: 'red', bold: false }]); }}>+ Añadir regla</button>
+    </div>
+  );
+}
+
+function TimerCell({ id, col, v, onAction }: { id: string; col: Col; v: CellVal; onAction: (a: 'start' | 'stop' | 'reset') => void }) {
+  const t = asTimer(v);
+  const on = t.start !== null;
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    const h = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(h);
+  }, [on]);
+  const ms = timerMs(v);
+  return (
+    <div className={'pm-timer' + (on ? ' on' : '')}>
+      <button id={id} className="timer-btn" aria-label={on ? 'Parar ' + col.name : 'Iniciar ' + col.name} title={on ? 'Parar' : 'Iniciar (para cualquier otro en marcha)'} onClick={() => onAction(on ? 'stop' : 'start')}>{on ? '■' : '▶'}</button>
+      <span className="timer-val">{ms ? formatTimer(ms) : <span className="muted">0:00:00</span>}</span>
+      {!on && ms > 0 && <button className="icon-btn small" aria-label={'Poner a cero ' + col.name} title="Poner a cero" onClick={() => onAction('reset')}>↺</button>}
+    </div>
+  );
+}
+
+function SortMenu({ pm, op }: { pm: Pm; op: (o: PmOp) => void }) {
+  const set = (sorts: Sort[]) => op({ op: 'sorts', sorts });
+  return (
+    <div className="stack small-gap">
+      {pm.sorts.map((s, i) => (
+        <div key={s.col + i} className="row">
+          <span className="small muted">{i === 0 ? 'Ordenar por' : 'luego por'}</span>
+          <select value={s.col} aria-label="Columna" onChange={(e) => set(pm.sorts.map((x, k) => (k === i ? { ...x, col: e.target.value } : x)))}>{pm.cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          <select value={s.dir} aria-label="Dirección" onChange={(e) => set(pm.sorts.map((x, k) => (k === i ? { ...x, dir: e.target.value as Sort['dir'] } : x)))}><option value="asc">Ascendente</option><option value="desc">Descendente</option></select>
+          <button className="icon-btn small" aria-label="Quitar orden" onClick={() => set(pm.sorts.filter((_, k) => k !== i))}>×</button>
+        </div>
+      ))}
+      <div className="row"><button className="link small" onClick={() => { const free = pm.cols.find((c) => !pm.sorts.some((s) => s.col === c.id)); if (free) set([...pm.sorts, { col: free.id, dir: 'asc' }]); }}>+ Añadir orden</button><span className="grow" />{pm.sorts.length > 0 && <button className="link small" onClick={() => set([])}>Quitar todos</button>}</div>
+      {pm.sorts.length > 0 && <span className="small muted">Mientras hay un orden activo, las filas no se pueden mover a mano.</span>}
+      <label className="menu-label">Agrupar filas por
+        <select value={pm.group ?? ''} aria-label="Agrupar filas por" onChange={(e) => op({ op: 'group', col: e.target.value || null })}>
+          <option value="">Sin agrupar</option>{pm.cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function PropsMenu({ pm, op }: { pm: Pm; op: (o: PmOp) => void }) {
+  return (
+    <div className="stack small-gap">
+      <span className="menu-label">Columnas visibles</span>
+      {pm.cols.map((c, i) => (
+        <label key={c.id} className="check-line small">
+          <input type="checkbox" checked={!c.hidden} disabled={i === 0} onChange={() => op({ op: 'patchCol', id: c.id, patch: { hidden: !c.hidden } })} />
+          <span className="th-icon">{TYPE_ICON[c.type]}</span>{c.name}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function AddColMenu({ pm, op, close }: { pm: Pm; op: (o: PmOp) => void; close: () => void }) {
+  return (
+    <>
+      <span className="menu-label">Tipo de columna</span>
+      {(Object.keys(TYPE_LABEL) as ColType[]).map((t) => <button key={t} onClick={() => { op({ op: 'addCol', col: newCol(t, pm) }); close(); }}><span className="th-icon">{TYPE_ICON[t]}</span> {TYPE_LABEL[t]}</button>)}
+    </>
+  );
+}
+
+function RowMenu({ pm, row, op, close, openPage }: { pm: Pm; row: string; op: (o: PmOp) => void; close: () => void; openPage: (id: string) => void }) {
+  const { toast } = useApp();
+  const r = pm.rows.find((x) => x.id === row);
+  return (
+    <>
+      <button onClick={() => openPage(row)}>↗ Abrir como página</button>
+      <button onClick={() => { op({ op: 'addRow', id: pmId('row'), after: row }); close(); }}>Insertar fila debajo</button>
+      <button onClick={() => {
+        const src = pm.rows.find((r) => r.id === row);
+        if (src) { op({ op: 'addRow', id: pmId('row'), after: row, cells: src.cells }); toast('Fila duplicada'); }
+        close();
+      }}>Duplicar</button>
+      <button onClick={() => { op({ op: 'row', id: row, patch: { archived: !r?.archived } }); close(); }}>{r?.archived ? 'Desarchivar' : 'Archivar'}</button>
+      <div className="menu-sep" />
+      <button className="danger-text" onClick={() => { op({ op: 'removeRow', id: row }); close(); }}>Eliminar fila</button>
+    </>
+  );
+}
+
+
+/** «Opciones de la tabla». */
+function OptionsMenu({ card, close, openPop }: { card: PmCard; close: () => void; openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void }) {
+  const { state, dispatch, toast, copy } = useApp();
+  const [tplName, setTplName] = useState<string | null>(null);
+  const pm = card.pm;
+  const rows = visibleRows(pm, state.tags, dayKey(new Date()), '');
+  return (
+    <>
+      <button onClick={() => openPop('props')}>☰ Propiedades</button>
+      <button onClick={() => openPop('rules')}>🖌 Formato condicional</button>
+      <button onClick={async () => {
+        const { text, html } = toClipboard(pm, rows, state.tags);
+        try {
+          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+            await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([text], { type: 'text/plain' }), 'text/html': new Blob([html], { type: 'text/html' }) })]);
+            toast(`Copiadas ${rows.length} filas · pégalas en Excel o Numbers`);
+          } else copy(text, `Copiadas ${rows.length} filas`);
+        } catch { copy(text, `Copiadas ${rows.length} filas`); }
+        close();
+      }}>⧉ Copiar para pegar en Excel</button>
+      <button onClick={() => openPop('csv')}>⇅ Importar / exportar CSV</button>
+      {tplName === null ? (
+        <button onClick={() => setTplName(card.title || 'Mi plantilla')}>💾 Guardar como plantilla</button>
+      ) : (
+        <div className="row pad">
+          <input autoFocus value={tplName} aria-label="Nombre de la plantilla" onChange={(e) => setTplName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget.nextElementSibling as HTMLButtonElement)?.click()} />
+          <button className="primary small-btn" onClick={() => { dispatch({ t: 'pmTemplates', list: [...state.pmTemplates, asTemplate(pm, tplName.trim() || 'Mi plantilla')] }); toast('Plantilla guardada · aparecerá al crear una Tabla PM'); close(); }}>Guardar</button>
+        </div>
+      )}
+      <button onClick={() => { dispatch({ t: 'duplicateCard', id: card.id }); toast('Tabla duplicada'); close(); }}>⎘ Duplicar tabla</button>
+      <div className="menu-sep" />
+      <button className="danger-text" onClick={() => { dispatch({ t: 'trashCard', id: card.id }); toast('Tarjeta movida a la papelera'); close(); }}>🗑 Mover la tabla a la papelera</button>
+    </>
+  );
+}
+
+/** Importar y exportar CSV (separador configurable; punto y coma por defecto, para Excel en español). */
+function CsvMenu({ pm, card, rows, close, openImport }: { pm: Pm; card: PmCard; rows: Row[]; op: (o: PmOp) => void; close: () => void; openImport: (plan: CsvPlan, name: string) => void }) {
+  const { state, backend, toast, copy } = useApp();
+  const [sep, setSep] = useState<';' | ',' | '\t'>(';');
+  const name = (card.title || 'tabla').replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'tabla';
+  return (
+    <>
+      <span className="menu-label">Exportar la vista actual</span>
+      <div className="row pad"><span className="small">Separador</span><div className="seg" title="Separador">{([[';', ';'], [',', ','], ['\t', 'Tab']] as const).map(([v, l]) => <button key={l} className={sep === v ? 'on' : ''} onClick={() => setSep(v)}>{l}</button>)}</div></div>
+      <span className="small muted pad">«;» es el separador que espera Excel en español.</span>
+      <button onClick={async () => { const ok = await backend.saveCsv(name + '.csv', toCsv(pm, rows, state.tags, sep)); if (ok) toast(`Exportadas ${rows.length} filas a CSV`); close(); }}>Descargar .csv</button>
+      <button onClick={() => { copy(toCsv(pm, rows, state.tags, sep), `CSV copiado · ${rows.length} filas`); close(); }}>Copiar CSV</button>
+      <div className="menu-sep" />
+      <span className="menu-label">Importar</span>
+      <button onClick={async () => {
+        const f = await backend.openCsv();
+        if (!f) return;
+        const plan = planImport(pm, f.text);
+        if (!plan.header.length) { toast('Ese archivo está vacío'); return; }
+        openImport(plan, f.name);
+      }}>Elegir archivo .csv</button>
+      <span className="small muted pad">Detecta el separador y los tipos; antes de importar puedes asignar cada columna. Se puede deshacer.</span>
+    </>
+  );
+}
+
+function ViewMenu({ pm, id, op, close }: { pm: Pm; id: string; op: (o: PmOp) => void; close: () => void }) {
+  const views = pmViews(pm);
+  const i = views.findIndex((v) => v.id === id);
+  const v = views[i];
+  if (!v) return null;
+  return (
+    <>
+      <input autoFocus value={v.name} aria-label="Nombre de la vista" onChange={(e) => op({ op: 'viewPatch', id, name: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && close()} />
+      <div className="row pad">
+        <button className="grow" disabled={i === 0} onClick={() => op({ op: 'viewMove', id, before: views[i - 1].id })}>← Mover</button>
+        <button className="grow" disabled={i === views.length - 1} onClick={() => op({ op: 'viewMove', id, before: views[i + 2]?.id ?? null })}>Mover →</button>
+      </div>
+      <button onClick={() => { op({ op: 'viewDuplicate', id, newId: pmId('view') }); close(); }}>Duplicar vista</button>
+      {views.length > 1 && <button className="danger-text" onClick={() => { op({ op: 'viewRemove', id }); close(); }}>Eliminar vista</button>}
+    </>
+  );
+}
+
+function AddViewMenu({ op, close }: { op: (o: PmOp) => void; close: () => void }) {
+  return (
+    <>
+      {(['table', 'kanban', 'timeline', 'calendar', 'gallery'] as PmView[]).map((t) => <button key={t} onClick={() => { op({ op: 'viewAdd', id: pmId('view'), type: t }); close(); }}>{VIEW_LABEL[t]}</button>)}
+    </>
+  );
+}
+
+function ImportMenu({ pm, card, plan, name, close }: { pm: Pm; card: PmCard; plan: CsvPlan; name: string; close: () => void }) {
+  const { dispatch, toast } = useApp();
+  const [p, setP] = useState(plan);
+  const sepName = p.sep === ';' ? 'punto y coma' : p.sep === ',' ? 'coma' : 'tabulador';
+  return (
+    <div className="stack small-gap">
+      <h3>Importar «{name}»</h3>
+      <p className="small muted">{p.rows.length} filas · separador: {sepName}. Elige a qué columna va cada dato; las que no existen se crean.</p>
+      <div className="import-map">
+        {p.header.map((h, i) => (
+          <div key={i} className="row">
+            <span className="grow ellipsis"><b>{h || '(sin nombre)'}</b> <span className="small muted">{p.rows.slice(0, 2).map((r) => r[i]).filter(Boolean).join(' · ')}</span></span>
+            <select aria-label={'Destino de ' + h} value={p.map[i] ?? 'new:' + p.types[i]} onChange={(e) => {
+              const v = e.target.value;
+              const map = p.map.slice(), types = p.types.slice();
+              if (v.startsWith('new:')) { map[i] = null; types[i] = v.slice(4) as ColType; } else map[i] = v;
+              setP({ ...p, map, types });
+            }}>
+              {pm.cols.filter((c) => c.type !== 'progress').map((c) => <option key={c.id} value={c.id}>→ {c.name}</option>)}
+              {(['text', 'number', 'select', 'multi', 'checkbox', 'date'] as ColType[]).map((t) => <option key={t} value={'new:' + t}>Nueva columna: {TYPE_LABEL[t]}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+      <div className="row-end">
+        <button className="tool" onClick={close}>Cancelar</button>
+        <button className="primary" onClick={() => { dispatch({ t: 'pmImport', card: card.id, plan: p }); toast(`Importadas ${p.rows.length} filas · puedes deshacerlo con ⌘Z`); close(); }}>Importar {p.rows.length} filas</button>
+      </div>
+    </div>
+  );
+}
+
+function FormulaEditor({ pm, col, patch }: { pm: Pm; col: Col; patch: (p: Partial<Col>) => void }) {
+  const [text, setText] = useState(col.expr ?? '');
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const syntax = text.trim() ? checkFormula(text) : null;
+  const missing = syntax ? [] : propsIn(text).filter((n) => !pm.cols.some((c) => c.name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase() === n.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()));
+  const err = syntax ?? (missing.length ? `No hay ninguna propiedad «${missing[0]}».` : null);
+  const insert = (t: string) => { const el = ta.current; const a = el?.selectionStart ?? text.length; const next = text.slice(0, a) + t + text.slice(el?.selectionEnd ?? a); setText(next); if (!checkFormula(next)) patch({ expr: next }); requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(a + t.length, a + t.length); }); };
+  return (
+    <div className="formula-ed">
+      <span className="menu-label">Fórmula</span>
+      <textarea ref={ta} value={text} rows={3} spellCheck={false} aria-label="Fórmula" placeholder="{Presupuesto} * 1.21"
+        onChange={(e) => { setText(e.target.value); if (!checkFormula(e.target.value) || !e.target.value.trim()) patch({ expr: e.target.value }); }} />
+      {err ? <span className="err small">{err}</span> : text.trim() ? <span className="small ok">✓ Fórmula correcta</span> : null}
+      <div className="formula-props">{pm.cols.filter((c) => c.id !== col.id).map((c) => <button key={c.id} className="chip" onClick={() => insert(`{${c.name}}`)}>{c.name}</button>)}</div>
+      <span className="small muted">{FUNCTION_HELP}</span>
+    </div>
+  );
+}
+
+function RollupEditor({ pm, col, patch }: { pm: Pm; col: Col; patch: (p: Partial<Col>) => void }) {
+  const { state } = useApp();
+  const rels = pm.cols.filter((c) => c.type === 'relation');
+  const rel = rels.find((c) => c.id === col.rel);
+  const target = rel?.target ? state.cards.find((c) => c.id === rel.target && c.type === 'pm') : null;
+  const tcols = target && target.type === 'pm' ? target.pm.cols : [];
+  return (
+    <div className="stack small-gap">
+      {!rels.length && <span className="small err">Añade antes una columna de Relación.</span>}
+      <label className="menu-label">Relación
+        <select value={col.rel ?? ''} onChange={(e) => patch({ rel: e.target.value || undefined, prop: undefined })}>
+          <option value="">—</option>{rels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </label>
+      <label className="menu-label">Función
+        <select value={col.fn ?? 'count'} onChange={(e) => patch({ fn: e.target.value as Col['fn'] })}>{ROLL_FNS.map(([f, l]) => <option key={f} value={f}>{l}</option>)}</select>
+      </label>
+      {col.fn && !['count', 'pctDone'].includes(col.fn) && (
+        <label className="menu-label">Propiedad de «{target?.title || 'la tabla enlazada'}»
+          <select value={col.prop ?? ''} onChange={(e) => patch({ prop: e.target.value || undefined })} disabled={!target}>
+            <option value="">—</option>{tcols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+      )}
+      {rel && !rel.target && col.fn !== 'count' && <span className="small muted">La relación «{rel.name}» no tiene tabla enlazada: solo puede contar enlaces.</span>}
+      <span className="small muted">El resumen tiene su propio formato (abajo): no copia el de la columna resumida.</span>
+    </div>
+  );
+}
+
+function Gallery({ pm, rows, tags, op, onOpen, today }: { pm: Pm; rows: Row[]; tags: Opt[]; op: (o: PmOp) => void; onOpen: (id: string) => void; today: string }) {
+  const { state } = useApp();
+  const size = pm.ui?.gallerySize ?? 'M';
+  const imgCol = pm.cols.find((c) => c.type === 'image');
+  const status = pm.cols.find((c) => c.type === 'status');
+  const prog = pm.cols.find((c) => c.type === 'progress');
+  const extra = pm.cols.filter((c) => !c.hidden && ['select', 'multi', 'date', 'number', 'formula', 'rollup'].includes(c.type)).slice(0, size === 'S' ? 1 : size === 'M' ? 2 : 4);
+  return (
+    <div className="gallery-wrap">
+      <div className="row tl-bar">
+        <div className="seg">{(['S', 'M', 'L'] as const).map((z) => <button key={z} className={size === z ? 'on' : ''} onClick={() => op({ op: 'ui', patch: { gallerySize: z } })}>{z}</button>)}</div>
+        {!imgCol && <span className="small muted">Añade una columna de tipo «Imágenes» para mostrar portadas en las tarjetas.</span>}
+      </div>
+      <div className={'gallery size-' + size}>
+        {rows.map((r) => {
+          const cover = imgCol ? strList(r.cells[imgCol.id]).find((id) => state.assets[id]) : null;
+          const si = status ? stateInfo(status, r.cells[status.id]) : null;
+          const rule = ruleFor(pm, r, tags, today);
+          return (
+            <button key={r.id} className={'gcard' + (r.archived ? ' archived' : '')} style={rule ? { borderColor: COLORS[rule.color][1] } : undefined} onClick={() => onOpen(r.id)}>
+              <div className="gcover">{cover ? <img src={state.assets[cover].data} alt="" /> : <span>{rowTitle(pm, r, tags).slice(0, 1).toUpperCase()}</span>}</div>
+              <div className="gbody">
+                <b className={rule?.bold ? 'bold' : ''}>{rowTitle(pm, r, tags)}</b>
+                {si && <span className="pill" style={{ background: COLORS[si.ph.color][0], color: COLORS[si.ph.color][1] }}>{si.st.name}</span>}
+                {extra.map((c) => { const t = cellText(pm, c, r, tags); return t ? <span key={c.id} className="small muted ellipsis">{c.name}: {t}</span> : null; })}
+                {prog && <div className="progress"><span style={{ width: progress(pm, prog, r) + '%' }} /></div>}
+              </div>
+            </button>
+          );
+        })}
+        {!rows.length && <div className="empty">No hay filas que mostrar.</div>}
+      </div>
+    </div>
+  );
+}
+
+/** Selector de fecha: calendario mensual, interruptor «Rango», «Hoy» y «Quitar fecha». */
+function DatePick({ value, onChange, onClose }: { value: DateVal; onChange: (v: CellVal) => void; onClose: () => void }) {
+  const [range, setRange] = useState(!!value.end);
+  const [waiting, setWaiting] = useState(false);
+  const todayK = dayKey(new Date());
+  const [month, setMonth] = useState(() => { const d = value.start ? new Date(value.start + 'T00:00') : new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const first = (month.getDay() + 6) % 7;
+  const n = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const cells = [...Array(first).fill(0), ...Array.from({ length: n }, (_, i) => i + 1)];
+  const key = (d: number) => dayKey(new Date(month.getFullYear(), month.getMonth(), d));
+  const pick = (k: string) => {
+    if (!range) { onChange({ start: k, end: '' }); onClose(); return; }
+    if (!waiting) { onChange({ start: k, end: '' }); setWaiting(true); return; }
+    const s0 = value.start || k;
+    onChange(k < s0 ? { start: k, end: s0 } : { start: s0, end: k });
+    setWaiting(false); onClose();
+  };
+  const inRange = (k: string) => !!value.start && !!value.end && k >= value.start && k <= value.end;
+  return (
+    <div className="stack small-gap date-pop">
+      <div className="row">
+        <button className="icon-btn small" aria-label="Mes anterior" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
+        <b className="grow center cap">{month.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</b>
+        <button className="icon-btn small" aria-label="Mes siguiente" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
+      </div>
+      <div className="dp-grid">
+        {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((w) => <span key={w} className="small muted">{w}</span>)}
+        {cells.map((d, i) => d === 0 ? <span key={i} /> : <button key={i} className={'dp-day' + (key(d) === value.start || key(d) === value.end ? ' on' : inRange(key(d)) ? ' mid' : '') + (key(d) === todayK ? ' today' : '')} onClick={() => pick(key(d))}>{d}</button>)}
+      </div>
+      <label className="check-line small"><input type="checkbox" role="switch" checked={range} onChange={() => { setRange(!range); setWaiting(false); if (range) onChange({ start: value.start, end: '' }); }} /> Rango</label>
+      {range && <span className="small muted">Elige el día de inicio y luego el de fin{waiting ? ' (ahora el de fin)' : ''}</span>}
+      <div className="row"><button className="link small" onClick={() => { onChange({ start: todayK, end: '' }); onClose(); }}>Hoy</button><span className="grow" /><button className="link small" onClick={() => { onChange(null); onClose(); }}>Quitar fecha</button></div>
+    </div>
+  );
+}
