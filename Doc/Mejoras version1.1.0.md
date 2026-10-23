@@ -12,12 +12,12 @@ Registro de cada mejora: qué se pidió, qué se hizo y cómo se comprobó.
 
 **Cambios.**
 
-- `.github/macos.yml`: el paso «Compilar la app» define `APPLE_SIGNING_IDENTITY: "-"` (firma ad-hoc).
+- `.github/workflows/macos_V1-1-0.yml`: el paso «Compilar la app» define `APPLE_SIGNING_IDENTITY: "-"` (firma ad-hoc).
 - `README.md` (Instalación): se corrige el aviso de macOS. Ya no dice que basta el clic derecho → «Abrir»; explica el mensaje de «dañada» y el comando `xattr -cr /Applications/Cuaderno.app`.
 
 **Solución inmediata en un Mac ya instalado.** Arrastrar Cuaderno a Aplicaciones y ejecutar en Terminal `xattr -cr /Applications/Cuaderno.app`.
 
-**Pendiente.** `.github/macos.yml` está protegido contra escritura para las herramientas remotas: el cambio (`env: APPLE_SIGNING_IDENTITY: "-"` en el paso «Compilar la app») hay que pegarlo a mano.
+**Nota.** `.github/macos.yml` estaba protegido contra escritura; el cambio lo aplicó el usuario a mano en el workflow nuevo `macos_V1-1-0.yml`.
 
 **Comprobación.** Pendiente: lanzar el workflow «Compilar para macOS», descargar el .dmg en un Mac y abrir la app. Si sigue apareciendo el aviso, se usa `xattr`. No se puede verificar en la nube.
 
@@ -38,11 +38,17 @@ En el tablero, cada fila de la tarjeta Tabla PM muestra las 3 primeras columnas 
 **Fecha:** 22 de octubre de 2026
 
 - Texto largo: cada tarea es un cuadro de texto que crece y parte la línea en cualquier carácter, como una terminal.
-- Botón (+) junto al de plegar en cada tarea principal para añadir una subtarea. Se elimina «+ Añadir subtarea» de abajo y la pregunta «¿Dentro de qué tarea?».
+- Botón (+) junto al de plegar en cada tarea para añadir una subtarea; también en las subtareas (sub-subtareas, hasta 5 niveles). Se elimina «+ Añadir subtarea» de abajo y la pregunta «¿Dentro de qué tarea?».
 - ↑ y ↓ pasan a la tarea anterior o siguiente (saltan las plegadas). En un texto de varias líneas solo pasan desde la primera o la última línea.
 - Ctrl+A selecciona todas las tareas (decisión del usuario: un solo Ctrl+A). Ctrl+C las copia como Markdown, Ctrl+X las corta y Ctrl+V pega varias líneas como varias tareas; con todo seleccionado, reemplaza la lista. Un pegado es un solo paso de deshacer (acción nueva `setCheckItems`).
 - Archivos: `CheckBody.tsx`, `lib/checklist.ts`, `lib/store.ts`. Pruebas: `checklist.test.ts` y `mejoras110.test.tsx`.
 - Aún no está: la barra de formato de texto (Fase 5).
+
+### Correcciones tras la primera prueba (22–23 de octubre de 2026)
+
+- **Sangría:** cada nivel se sangra 24 px, así que la viñeta de la subtarea queda más a la derecha que la de la tarea. Enter crea la tarea nueva tras las subtareas y al mismo nivel; Tab y Mayús+Tab mueven la tarea con todo lo que cuelga de ella; marcar una tarea marca también sus subtareas, y una tarea con subtareas figura hecha cuando lo están todas las suyas.
+- **↓ no bajaba:** se contaban mal las líneas visuales (el relleno sumaba una de más). Ahora el cursor y el texto se miden con la misma copia invisible (`caretAtEdge`), así ↓ pasa a la tarea siguiente desde la última línea.
+- **Selección con el ratón:** dentro de una tarea el ratón selecciona texto con normalidad (para copiarlo). Al arrastrar a otra tarea, o con Mayús+clic o Mayús+↑/↓, se selecciona un bloque de tareas; Ctrl+C, Ctrl+X, Supr y Ctrl+V actúan sobre el bloque y Esc lo suelta. El portapapeles funciona con un cuadro de texto oculto, igual que una hoja de cálculo, para que sirva también en macOS.
 
 ## 5 · Color de tarjeta libre e iconos configurables
 
@@ -52,14 +58,20 @@ En el tablero, cada fila de la tarjeta Tabla PM muestra las 3 primeras columnas 
 
 **Cambios.**
 
-- Botón de color con icono (paleta por defecto) y selector «Color de la tarjeta»: cuadro de saturación y brillo, barra de tono, campos H, S, B, R, G, B y HEX, nuevo y actual, «Automático», «Cancelar» y «Aceptar». El HEX se guarda exacto (una prueba detectó que pasar por HSB cambiaba un dígito).
+- Botón de color con icono (paleta por defecto) y selector «Color de la tarjeta»: cuadro de saturación y brillo, barra de tono, campos HSB (H, S, B) en una columna y RGB (R, G, B) en otra, HEX, nuevo y actual, «Automático», «Cancelar» y «Aceptar». El HEX se guarda exacto (una prueba detectó que pasar por HSB cambiaba un dígito).
 - Las tarjetas con un color antiguo lo conservan (ya se guardaba como HEX).
 - Legibilidad: el texto se elige entre el claro y el oscuro del tema y, si ninguno llega a 4,5 : 1, pasa a negro o blanco. Prueba sobre 4096 colores.
 - Iconos: 53 iconos incluidos en el código (sin recursos externos) en 5 estilos: Notion (Phosphor light), Lineal (Lucide), Grueso (Phosphor bold), Relleno (Phosphor fill) y Duotono (Phosphor duotone). Licencias MIT e ISC en `THIRD_PARTY_LICENSES.md`.
-- «Personalizar barra» → «Estilo de los iconos» e «Icono del botón de color» (Paleta, Gota, Bote de pintura, Muestras, Pincel). «Restablecer» los devuelve a Notion y Paleta.
-- Los iconos de Vistas y de cada tarea principal se estrenan en la Fase 6 (barra lateral).
+- «Personalizar barra» → «Estilo de los iconos», «Iconos de la barra» e «Icono del botón de color» (Paleta, Gota, Bote de pintura, Muestras, Pincel). «Restablecer» los devuelve a Notion, a los iconos de origen y a Paleta.
+- **Iconos de la barra (corrección 23 de octubre):** Inicio, Hoy, Recordatorios, Calendario, Grafo, Diario y Papelera usan estos mismos iconos y estilos (ya no son símbolos de texto). En «Iconos de la barra» se pulsa una vista y se elige uno de los 53 iconos, o «Predeterminado». Se guarda en `settings.viewIcons`. También llevan icono los botones de papelera y de mover a carpeta de cada tarea.
+- Los iconos propios de cada tarea principal se estrenan en la Fase 6 (barra lateral).
 - Archivos nuevos: `lib/color.ts`, `lib/icons.ts`, `lib/iconData.ts`, `components/ColorPicker.tsx`, `components/Icon.tsx`.
+
+### Selector de color: corrección (23 de octubre de 2026)
+
+- **Fallo:** el cuadro de color y la barra de tono no respondían hasta cambiar antes un número. Causa: se leía la referencia al elemento antes de que existiera, en el primer dibujo. Ahora se usa el elemento del propio evento. Una prueba falla con el código antiguo.
+- **Orden de los campos:** H, S, B juntos en una columna y R, G, B juntos en otra; el HEX debajo.
 
 ## Comprobación de la Fase 1
 
-En la nube: `npx tsc --noEmit` sin errores, 133 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, el selector de color con el ratón y la capa de Tauri.
+En la nube: `npx tsc --noEmit` sin errores, 145 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.

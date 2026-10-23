@@ -91,7 +91,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 **Común a todas.**
 
 - **Franja superior:** se arrastra para mover la tarjeta y muestra su tipo y tres botones: «Color de la tarjeta», «Abrir en grande» y «Eliminar tarjeta» (va a la papelera: «Tarjeta movida a la papelera»).
-- **Colores:** Automático (según el tablero), Mantequilla, Melocotón, Rosa, Lila, Cielo, Menta, Papel, Tinta, Bosque y los de etiqueta Ilustración, Pintura, Cliente, Urgente y Digital. **En la app** (mejora 1.1.0) el botón de color es un icono (paleta por defecto, configurable en «Personalizar barra») que abre «Color de la tarjeta»: un selector libre con cuadro de saturación y brillo, barra de tono, campos H, S, B, R, G, B y HEX, el color nuevo junto al actual y los botones «Automático», «Cancelar» y «Aceptar». Ya no hay colores predefinidos; las tarjetas que tenían uno lo conservan. El texto se contrasta solo.
+- **Colores:** Automático (según el tablero), Mantequilla, Melocotón, Rosa, Lila, Cielo, Menta, Papel, Tinta, Bosque y los de etiqueta Ilustración, Pintura, Cliente, Urgente y Digital. **En la app** (mejora 1.1.0) el botón de color es un icono (paleta por defecto, configurable en «Personalizar barra») que abre «Color de la tarjeta»: un selector libre con cuadro de saturación y brillo, barra de tono, campos HSB en una columna y RGB en otra, HEX, el color nuevo junto al actual y los botones «Automático», «Cancelar» y «Aceptar». Ya no hay colores predefinidos; las tarjetas que tenían uno lo conservan. El texto se contrasta solo.
 - **Título:** editable («Sin título»).
 - **Tamaño:** se cambia desde la esquina inferior.
 - **Abrir en grande:** muestra la tarjeta en la ventana «Tarjeta en grande», con el mismo contenido y controles, su color, su título y «Cerrar (Esc)».
@@ -99,8 +99,8 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 **Checklist.**
 
 - Tareas con casilla y subtareas plegables. Las tareas con subtareas muestran un estado parcial y su contador.
-- Botones «Añadir tarea» y «Añadir subtarea» (pregunta «¿Dentro de qué tarea?»). **En la app** (mejora 1.1.0) solo queda «+ Añadir tarea» abajo; cada tarea principal tiene un botón (+) junto al de plegar que añade una subtarea, y ya no existe la pregunta «¿Dentro de qué tarea?».
-- Atajo: Tab convierte una tarea en subtarea de la anterior y Mayús+Tab lo deshace. **En la app** (mejora 1.1.0): el texto largo se parte en varias líneas (en cualquier carácter, como una terminal); ↑ y ↓ pasan a la tarea anterior o siguiente (en un texto de varias líneas, desde la primera o la última); Ctrl+A selecciona todas las tareas, Ctrl+C las copia como Markdown (`- [ ] tarea`, con sangría para las subtareas), Ctrl+X las corta y Ctrl+V pega varias líneas como varias tareas (con todo seleccionado, reemplaza la lista).
+- Botones «Añadir tarea» y «Añadir subtarea» (pregunta «¿Dentro de qué tarea?»). **En la app** (mejora 1.1.0) solo queda «+ Añadir tarea» abajo; cada tarea y cada subtarea tiene un botón (+) junto al de plegar que añade una subtarea (hasta 5 niveles, con la viñeta de cada nivel más a la derecha), y ya no existe la pregunta «¿Dentro de qué tarea?».
+- Atajo: Tab convierte una tarea en subtarea de la anterior y Mayús+Tab lo deshace. **En la app** (mejora 1.1.0): el texto largo se parte en varias líneas (en cualquier carácter, como una terminal); ↑ y ↓ pasan a la tarea anterior o siguiente (en un texto de varias líneas, desde la primera o la última); Ctrl+A selecciona todas las tareas (también se pueden seleccionar con el ratón arrastrando de una tarea a otra o con Mayús+clic; dentro de una tarea el ratón selecciona texto con normalidad), Ctrl+C las copia como Markdown (`- [ ] tarea`, con sangría para las subtareas), Ctrl+X las corta y Ctrl+V pega varias líneas como varias tareas (con todo seleccionado, reemplaza la lista).
 - La tarjeta muestra su progreso, que suma al de la tarea principal.
 
 **Recordatorio.**
@@ -450,7 +450,7 @@ Opcional y desactivado por defecto. Se configura en Ajustes → Seguridad.
 
 ## 15. Personalización y apariencia
 
-- **Personalizar barra:** color (Papel, Salvia, Rosa arcilla, Ocre, Tinta, Cobalto, Bosque) y textura de la barra lateral, iguales en todos los tableros; el panel indica su alcance: «Toda la app». **En la app** (mejora 1.1.0) también se elige el «Estilo de los iconos» (Notion, Lineal, Grueso, Relleno o Duotono; iconos libres incluidos en la app) y el «Icono del botón de color» (Paleta, Gota, Bote de pintura, Muestras o Pincel).
+- **Personalizar barra:** color (Papel, Salvia, Rosa arcilla, Ocre, Tinta, Cobalto, Bosque) y textura de la barra lateral, iguales en todos los tableros; el panel indica su alcance: «Toda la app». **En la app** (mejora 1.1.0) también se elige el «Estilo de los iconos» (Notion, Lineal, Grueso, Relleno o Duotono; iconos libres incluidos en la app) el «Icono del botón de color» (Paleta, Gota, Bote de pintura, Muestras o Pincel) y los «Iconos de la barra» (Inicio, Hoy, Recordatorios, Calendario, Grafo, Diario y Papelera: cada uno se puede cambiar por cualquiera de los 53 iconos).
 - **Personalizar tablero:**
   - «Ambientes» predefinidos: Estudio, Cuaderno, Acuarela, Risografía, Noche y Taller.
   - El panel indica su alcance: «Solo esta tarea principal». Pestañas Tablero (colores Papel, Blanco roto, Arena, Niebla, Lavanda, Noche, Abismo) y Tarjetas (Papel, Blanco, Crema, Menta, Cielo, Grafito, Marino), cada una con «Color · …» y «Textura · …» (Liso, Puntos, Cuadrícula, Cuaderno, Lienzo, Diagonal, Acuarela).
