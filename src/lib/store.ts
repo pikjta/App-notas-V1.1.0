@@ -7,6 +7,7 @@ import type { CsvPlan, PmTemplate } from './pmio';
 import type { ColType, Opt, PmOp } from './pm';
 import type { FontStyle } from './appearance';
 import { assetToDoc, builtinCalendars, calendarToDoc, cardToDoc, folderToDoc, CARD_KIND_LABEL, DEFAULT_SETTINGS, DEFAULT_THEME, eventToDoc, JOURNAL_ID, projectToDoc, settingsToDoc, pmTemplatesToDoc, tagsToDoc, uid } from './model';
+import { normalizeLevels } from './checklist';
 import type { BackupSettings, Asset, Folder, CalEvent, Calendar, CalView, Card, CardType, CheckItem, Doc, Link, NoteCard, Project, Settings, Stroke, TableRow, Theme, WidgetKind } from './model';
 
 export type View = 'board' | 'trash' | 'today' | 'reminders' | 'journal' | 'calendar' | 'graph';
@@ -74,7 +75,7 @@ export type Action =
   | { t: 'emptyTrash' }
   | { t: 'emptyBoardTrash'; project: string }
   | { t: 'checkItem'; card: string; item: string; patch: Partial<CheckItem> }
-  | { t: 'addCheckItem'; card: string; after: string | null; id: string; level?: 0 | 1 }
+  | { t: 'addCheckItem'; card: string; after: string | null; id: string; level?: number }
   | { t: 'removeCheckItem'; card: string; item: string }
   | { t: 'setCheckItems'; card: string; items: CheckItem[] }
   | { t: 'tableCell'; card: string; row: string; col: number; value: string }
@@ -386,7 +387,7 @@ export function reduce(s: State, a: Action): Effect {
           const level = a.level ?? (a.after ? (items.find((it) => it.id === a.after)?.level ?? 0) : 0);
           items = [...items.slice(0, at), { id: a.id, text: '', done: false, level }, ...items.slice(at)];
         }
-        return { ...c, items };
+        return { ...c, items: normalizeLevels(items) };
       });
     case 'tableCell':
     case 'tableHead':

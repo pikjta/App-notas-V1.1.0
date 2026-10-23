@@ -28,7 +28,7 @@ type Base = { id: string; project: string; x: number; y: number; w: number; h?: 
 let order = 0;
 const base = (b: Base) => ({ id: b.id, project: b.project, x: b.x, y: b.y, w: b.w, h: b.h ?? 0, z: b.z, title: b.title, color: b.color ?? null, pos: order++, trashed: null });
 
-const check = (b: Base, items: [string, string, number?][]): Card => ({ ...base(b), type: 'check', items: items.map(([id, text, lvl]): CheckItem => ({ id, text, done: PLAN_DONE.has(id) || ['a1', 'a2', 'a3', 'b1', 'c2', 'd1'].includes(id), level: (lvl ?? 0) as 0 | 1 })) });
+const check = (b: Base, items: [string, string, number?][]): Card => ({ ...base(b), type: 'check', items: items.map(([id, text, lvl]): CheckItem => ({ id, text, done: PLAN_DONE.has(id) || ['a1', 'a2', 'a3', 'b1', 'c2', 'd1'].includes(id), level: lvl ?? 0 })) });
 const reminder = (b: Base, when: string, bell: boolean): Card => ({ ...base(b), type: 'reminder', when, bell, note: '' });
 const note = (b: Base, body: string): Card => ({ ...base(b), type: 'note', body });
 

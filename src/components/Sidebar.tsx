@@ -7,6 +7,9 @@ import { groupReminders, projectStats, reminders } from '../lib/agenda';
 import { todayKey } from '../lib/store';
 import { DEFAULT_SESSION_FONT, fontCss, normalizeFont, normalizeSide, sideVars } from '../lib/appearance';
 import { FontPanel, SidePanel } from './Appearance';
+import { Icon } from './Icon';
+import { viewIconOf } from '../lib/icons';
+import type { ViewIconId } from '../lib/icons';
 
 export function Sidebar() {
   const { state, dispatch, status, lock, openSettings, openSearch } = useApp();
@@ -21,6 +24,7 @@ export function Sidebar() {
   const [sideOpen, setSideOpen] = useState(false);
   const sessionFont = normalizeFont(state.settings.sessionFont, DEFAULT_SESSION_FONT);
   const side = normalizeSide(state.settings.side);
+  const vi = (id: ViewIconId, size = 16) => <Icon name={viewIconOf(state.settings.viewIcons, id)} size={size} />;
 
   const create = () => {
     const target = adding;
@@ -54,7 +58,7 @@ export function Sidebar() {
         </button>
         <span className="row-actions">
           <span className="menu-anchor">
-            <button className="icon-btn small" title="Mover a una carpeta" aria-label="Mover a una carpeta" aria-expanded={moveMenu === p.id} onClick={() => setMoveMenu(moveMenu === p.id ? null : p.id)}>⇢</button>
+            <button className="icon-btn small" title="Mover a una carpeta" aria-label="Mover a una carpeta" aria-expanded={moveMenu === p.id} onClick={() => setMoveMenu(moveMenu === p.id ? null : p.id)}><Icon name="folder" size={14} /></button>
             {moveMenu === p.id && (
               <div className="menu move-menu" role="menu" aria-label="Mover a" onMouseLeave={() => setMoveMenu(null)}>
                 <span className="menu-label">Mover a</span>
@@ -63,7 +67,7 @@ export function Sidebar() {
               </div>
             )}
           </span>
-          <button className="icon-btn small" title="Mover a la papelera" aria-label="Mover a la papelera" onClick={() => dispatch({ t: 'trashProject', id: p.id })}>🗑</button>
+          <button className="icon-btn small" title="Mover a la papelera" aria-label="Mover a la papelera" onClick={() => dispatch({ t: 'trashProject', id: p.id })}>{vi('trash', 14)}</button>
         </span>
         {st.total > 0 && <div className="side-bar" aria-hidden="true"><span style={{ width: st.pct + '%', background: p.color }} /></div>}
       </div>
@@ -93,13 +97,13 @@ export function Sidebar() {
       </div>
 
       <nav aria-label="Vistas" className="side-views">
-        <button className={'side-item' + (state.view === 'board' && state.sel === 'home' ? ' on' : '')} onClick={() => dispatch({ t: 'select', id: 'home' })}><span className="vi">⌂</span><span className="side-name">Inicio</span></button>
-        <button className={'side-item' + (state.view === 'today' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'today' })}><span className="vi">☀</span><span className="side-name">Hoy</span><span className="side-count">{todayCount || ''}</span></button>
-        <button className={'side-item' + (state.view === 'reminders' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'reminders' })}><span className="vi">🔔</span><span className="side-name">Recordatorios</span></button>
-        <button className={'side-item' + (state.view === 'calendar' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'calendar' })}><span className="vi">▦</span><span className="side-name">Calendario</span></button>
-        <button className={'side-item' + (state.view === 'graph' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'graph' })}><span className="vi">◎</span><span className="side-name">Grafo</span></button>
-        <button className={'side-item' + (state.view === 'journal' ? ' on' : '')} onClick={() => dispatch({ t: 'day', day: todayKey() })}><span className="vi">✎</span><span className="side-name">Diario</span><span className="side-count">{dailyCount || ''}</span></button>
-        <button className={'side-item' + (state.view === 'trash' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'trash' })}><span className="vi">🗑</span><span className="side-name">Papelera</span><span className="side-count">{trashCount || ''}</span></button>
+        <button className={'side-item' + (state.view === 'board' && state.sel === 'home' ? ' on' : '')} onClick={() => dispatch({ t: 'select', id: 'home' })}><span className="vi">{vi('home')}</span><span className="side-name">Inicio</span></button>
+        <button className={'side-item' + (state.view === 'today' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'today' })}><span className="vi">{vi('today')}</span><span className="side-name">Hoy</span><span className="side-count">{todayCount || ''}</span></button>
+        <button className={'side-item' + (state.view === 'reminders' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'reminders' })}><span className="vi">{vi('reminders')}</span><span className="side-name">Recordatorios</span></button>
+        <button className={'side-item' + (state.view === 'calendar' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'calendar' })}><span className="vi">{vi('calendar')}</span><span className="side-name">Calendario</span></button>
+        <button className={'side-item' + (state.view === 'graph' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'graph' })}><span className="vi">{vi('graph')}</span><span className="side-name">Grafo</span></button>
+        <button className={'side-item' + (state.view === 'journal' ? ' on' : '')} onClick={() => dispatch({ t: 'day', day: todayKey() })}><span className="vi">{vi('journal')}</span><span className="side-name">Diario</span><span className="side-count">{dailyCount || ''}</span></button>
+        <button className={'side-item' + (state.view === 'trash' ? ' on' : '')} onClick={() => dispatch({ t: 'view', view: 'trash' })}><span className="vi">{vi('trash')}</span><span className="side-name">Papelera</span><span className="side-count">{trashCount || ''}</span></button>
       </nav>
       <div className="side-label">Tareas principales</div>
       <nav aria-label="Tareas principales" className="side-list">

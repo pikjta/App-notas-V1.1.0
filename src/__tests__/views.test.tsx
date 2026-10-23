@@ -21,7 +21,7 @@ describe('vistas: Hoy, Recordatorios, Diario e Inicio', () => {
     await user.click(screen.getByText('Elegir fecha'));
     await user.click(within(screen.getByRole('dialog', { name: 'Elegir fecha y hora' })).getByText('Hoy'));
 
-    await user.click(screen.getByRole('button', { name: /^☀\s*Hoy/ }));
+    await user.click(Array.from(document.querySelectorAll('.side-item')).find((b) => b.querySelector('.side-name')?.textContent === 'Hoy')!);
     await screen.findByRole('heading', { name: 'Hoy' });
     const todayPanel = screen.getByText('Llamar al café').closest('.panel') as HTMLElement;
     expect(within(todayPanel).getByRole('heading').textContent).toContain('Hoy');

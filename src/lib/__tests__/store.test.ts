@@ -81,10 +81,12 @@ describe('tablero libre', () => {
     const c0 = newCard('check', 'home');
     if (c0.type !== 'check') throw new Error();
     const first = c0.items[0].id;
-    const s = run(loaded(), { t: 'addCard', card: c0 }, { t: 'checkItem', card: c0.id, item: first, patch: { text: 'Comprar pintura', done: true, level: 1 } }, { t: 'addCheckItem', card: c0.id, after: first, id: 'it2' });
+    // La primera tarea no puede ser subtarea (no tiene de qué colgar): la sangría se aplica a la segunda.
+    const s = run(loaded(), { t: 'addCard', card: c0 }, { t: 'checkItem', card: c0.id, item: first, patch: { text: 'Comprar pintura', done: true, level: 1 } }, { t: 'addCheckItem', card: c0.id, after: first, id: 'it2' }, { t: 'checkItem', card: c0.id, item: 'it2', patch: { level: 1 } }, { t: 'addCheckItem', card: c0.id, after: 'it2', id: 'it3' }, { t: 'checkItem', card: c0.id, item: 'it3', patch: { level: 4 } });
     const c = card(s, c0.id);
     if (c.type !== 'check') throw new Error();
-    expect(c.items.map((i) => [i.text, i.done, i.level])).toEqual([['Comprar pintura', true, 1], ['', false, 1]]);
+    // El nivel nunca salta (it3 pidió 4 y queda a 2) y hay sub-subtareas.
+    expect(c.items.map((i) => [i.text, i.done, i.level])).toEqual([['Comprar pintura', true, 0], ['', false, 1], ['', false, 2]]);
   });
 });
 

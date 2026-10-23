@@ -1,8 +1,8 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useApp } from '../../App';
 import type { CheckCard, CheckItem } from '../../lib/model';
 import { uid } from '../../lib/model';
-import { caretLine, checklistToMarkdown, looksLikeList, parseChecklist, visualLines } from '../../lib/checklist';
+import { MAX_LEVEL, blockRange, caretAtEdge, checklistToMarkdown, descEnd, effective, looksLikeList, parseChecklist, shiftSubtree, visibleIds } from '../../lib/checklist';
 
 /** Ajusta la altura del cuadro al texto (el texto largo se parte en varias líneas). */
 function fit(el: HTMLTextAreaElement | null) {
@@ -11,15 +11,22 @@ function fit(el: HTMLTextAreaElement | null) {
   el.style.height = el.scrollHeight + 'px';
 }
 
+/** Selección de varias tareas (con Ctrl+A, arrastrando con el ratón o con Mayús): de la tarea `a` a la `b`. */
+type Sel = { a: string; b: string };
+
 export function CheckBody({ card }: { card: CheckCard }) {
   const { dispatch } = useApp();
   const items = card.items;
   const done = items.filter((i) => i.done && i.text).length;
   const total = items.filter((i) => i.text).length;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // Ctrl+A selecciona toda la lista; Ctrl+C la copia y Ctrl+V pegado la reemplaza.
-  const [allSel, setAllSel] = useState(false);
+  const [sel, setSel] = useState<Sel | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const proxy = useRef<HTMLTextAreaElement>(null);
+  const lastFocus = useRef<string | null>(null);
+  const anchor = useRef<string | null>(null); // fila donde se pulsó el ratón
+  const down = useRef(false);                 // ratón pulsado dentro de la lista
+  const [ranging, setRanging] = useState(false);
   // El foco pasa al elemento nuevo en cuanto existe (antes de que llegue la siguiente tecla).
   const pending = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -27,79 +34,132 @@ export function CheckBody({ card }: { card: CheckCard }) {
     root.current?.querySelectorAll<HTMLTextAreaElement>('textarea.check-text').forEach(fit);
   }, [card.items]);
   const focus = (id: string) => { pending.current = id; if (document.getElementById('it-' + id)) { document.getElementById('it-' + id)?.focus(); pending.current = null; } };
+  const focusEnd = (id: string) => { const el = document.getElementById('it-' + id) as HTMLTextAreaElement | null; if (el) { el.focus(); const n = el.value.length; el.setSelectionRange(n, n); } };
 
-  // Hijos de cada tarea: las subtareas que la siguen hasta la próxima tarea principal.
-  const kids = (idx: number) => {
-    const out: typeof items = [];
-    for (let k = idx + 1; k < items.length && items[k].level === 1; k++) out.push(items[k]);
-    return out;
-  };
-  // Elementos visibles (las subtareas de una tarea plegada no cuentan para moverse con las flechas).
-  const visible: string[] = [];
-  {
-    let hide = false;
-    items.forEach((it, i) => {
-      if (it.level === 0) hide = kids(i).length > 0 && collapsed.has(it.id);
-      else if (hide) return;
-      visible.push(it.id);
-    });
-  }
+  const eff = effective(items);
+  const visible = visibleIds(items, collapsed);
+  const shown = new Set(visible);
+  const range = sel ? blockRange(items, collapsed, sel.a, sel.b) : null;
+  const selected = new Set(range ? items.slice(range[0], range[1] + 1).map((i) => i.id) : []);
+  const block = range ? items.slice(range[0], range[1] + 1) : [];
+
+  // Con tareas seleccionadas, un cuadro de texto oculto guarda la lista en Markdown y tiene el foco:
+  // así copiar, cortar y pegar funcionan igual en todos los sistemas (aunque no haya texto seleccionado a la vista).
+  useLayoutEffect(() => {
+    const p = proxy.current;
+    if (!p || !sel) return;
+    p.value = checklistToMarkdown(block);
+    p.focus({ preventScroll: true });
+    p.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, card.items]);
+  // Si el ratón se suelta fuera de la lista, termina el arrastre igualmente.
+  useEffect(() => {
+    const up = () => { down.current = false; setRanging(false); };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+
+  const set = (next: CheckItem[]) => dispatch({ t: 'setCheckItems', card: card.id, items: next.length ? next : [{ id: uid('it'), text: '', done: false, level: 0 }] });
   const addTask = () => { const id = uid('it'); dispatch({ t: 'addCheckItem', card: card.id, after: null, id, level: 0 }); focus(id); };
-  const addSub = (topId: string) => {
-    const idx = items.findIndex((i) => i.id === topId);
-    const last = kids(idx).pop() ?? items[idx];
+  const addSub = (parentId: string) => {
+    const idx = items.findIndex((i) => i.id === parentId);
+    if (idx < 0 || items[idx].level >= MAX_LEVEL) return;
     const id = uid('it');
-    dispatch({ t: 'addCheckItem', card: card.id, after: last.id, id, level: 1 });
-    setCollapsed((c) => { const n = new Set(c); n.delete(topId); return n; });
+    dispatch({ t: 'addCheckItem', card: card.id, after: items[descEnd(items, idx) - 1].id, id, level: items[idx].level + 1 });
+    setCollapsed((c) => { const n = new Set(c); n.delete(parentId); return n; });
     focus(id);
   };
   const move = (from: string, dir: -1 | 1) => {
     const i = visible.indexOf(from) + dir;
-    if (i >= 0 && i < visible.length) { const el = document.getElementById('it-' + visible[i]) as HTMLTextAreaElement | null; el?.focus(); const n = el?.value.length ?? 0; el?.setSelectionRange(n, n); return true; }
+    if (i >= 0 && i < visible.length) { focusEnd(visible[i]); return true; }
     return false;
   };
 
-  const onCopy = (e: React.ClipboardEvent) => {
-    if (!allSel) return;
-    e.preventDefault();
-    e.clipboardData.setData('text/plain', checklistToMarkdown(items));
+  // --- Selección ---------------------------------------------------------------------------
+  // Al salir de la selección con el teclado, el foco vuelve enseguida a la última tarea usada: así la tecla
+  // pulsada (una letra, por ejemplo) se escribe allí y no en el cuadro oculto.
+  const clearSel = (refocus = false) => {
+    setSel(null);
+    if (refocus && lastFocus.current) focusEnd(lastFocus.current);
   };
-  const onCut = (e: React.ClipboardEvent) => {
-    if (!allSel) return;
-    onCopy(e);
-    dispatch({ t: 'setCheckItems', card: card.id, items: [{ id: uid('it'), text: '', done: false, level: 0 }] });
-    setAllSel(false);
+  const selectAll = () => { if (items.length) setSel({ a: items[0].id, b: items[items.length - 1].id }); };
+  const removeBlock = () => {
+    if (!range) return;
+    const after = items[range[1] + 1] ?? items[range[0] - 1];
+    set([...items.slice(0, range[0]), ...items.slice(range[1] + 1)]);
+    setSel(null);
+    if (after) window.setTimeout(() => focusEnd(after.id), 0);
   };
-  const onPaste = (e: React.ClipboardEvent, current: CheckItem | null) => {
-    const text = e.clipboardData.getData('text/plain');
-    if (!text) return;
-    if (!allSel && !looksLikeList(text)) return; // texto normal: lo inserta el campo
+  /** Pega varias líneas: sustituyen a la selección o a la tarea (vacía) donde está el cursor. */
+  const pasteList = (text: string, current: CheckItem | null): boolean => {
     const fresh = parseChecklist(text, () => uid('it'));
-    if (!fresh.length) return;
-    e.preventDefault();
-    if (allSel || !current) {
-      dispatch({ t: 'setCheckItems', card: card.id, items: fresh });
-    } else {
+    if (!fresh.length) return false;
+    if (range) {
+      const off = items[range[0]].level;
+      set([...items.slice(0, range[0]), ...fresh.map((f) => ({ ...f, level: f.level + off })), ...items.slice(range[1] + 1)]);
+    } else if (current) {
       const at = items.findIndex((i) => i.id === current.id);
-      // Si la tarea actual está vacía, las nuevas ocupan su lugar.
-      const replace = current.text === '' ? 1 : 0;
-      const after = items.slice(at + 1 - replace);
-      // Una subtarea pegada tras una tarea principal vacía deja de serlo si no hay principal antes.
-      dispatch({ t: 'setCheckItems', card: card.id, items: [...items.slice(0, at + 1 - replace), ...fresh, ...after] });
-    }
-    setAllSel(false);
-    focus(fresh[fresh.length - 1].id);
+      const grown = fresh.map((f) => ({ ...f, level: f.level + current.level }));
+      if (current.text === '') set([...items.slice(0, at), ...grown, ...items.slice(at + 1)]); // la tarea vacía se sustituye
+      else { const end = descEnd(items, at); set([...items.slice(0, end), ...grown, ...items.slice(end)]); } // si no, va debajo de ella y sus subtareas
+    } else return false;
+    setSel(null);
+    window.setTimeout(() => focusEnd(fresh[fresh.length - 1].id), 0);
+    return true;
   };
 
-  let hideUntilTop = false;
+  const rowId = (t: EventTarget | null) => (t instanceof Element ? (t.closest('[data-item]') as HTMLElement | null)?.dataset.item ?? null : null);
+  const enterRow = (id: string) => {
+    if (!down.current) return;
+    if (!anchor.current) anchor.current = id;
+    if (!ranging && id === anchor.current) return; // todavía dentro de la primera fila: es una selección de texto normal
+    if (!ranging) {
+      setRanging(true);
+      window.getSelection()?.removeAllRanges();
+      const act = document.activeElement;
+      if (act instanceof HTMLTextAreaElement) act.setSelectionRange(act.selectionEnd, act.selectionEnd);
+    }
+    setSel({ a: anchor.current, b: id });
+  };
+
+  const onKeyDownCapture = (e: React.KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); e.stopPropagation(); selectAll(); return; }
+    if (!sel) return;
+    if (e.target === proxy.current) {
+      if (mod && ['c', 'x', 'v'].includes(e.key.toLowerCase())) return; // lo hace el portapapeles
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); removeBlock(); return; }
+      if (e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault(); e.stopPropagation();
+        const i = visible.indexOf(sel.b) + (e.key === 'ArrowDown' ? 1 : -1);
+        if (i >= 0 && i < visible.length) setSel({ a: sel.a, b: visible[i] });
+        return;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); const id = e.key === 'ArrowUp' ? items[range![0]].id : items[range![1]].id; setSel(null); window.setTimeout(() => focusEnd(id), 0); return; }
+      if (['Shift', 'Control', 'Meta', 'Alt'].includes(e.key)) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); clearSel(true); return; }
+      // Cualquier otra tecla vuelve a la tarea donde se estaba escribiendo, y esa tecla se escribe allí.
+      clearSel(true);
+    }
+  };
+
   return (
-    <div className={'check' + (allSel ? ' all-selected' : '')} ref={root} tabIndex={-1}
-      onKeyDown={(e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); setAllSel(true); return; }
-        if (allSel && !((e.metaKey || e.ctrlKey) && ['c', 'x', 'v'].includes(e.key.toLowerCase())) && !['Control', 'Meta', 'Shift'].includes(e.key)) setAllSel(false);
+    <div className={'check' + (selected.size ? ' has-sel' : '') + (ranging ? ' ranging' : '')} ref={root} tabIndex={-1} data-testid="check"
+      onKeyDownCapture={onKeyDownCapture}
+      onMouseDown={(e) => {
+        if (e.target === proxy.current) return;
+        // Pulsar en otra parte termina la selección de tareas; con Mayús se amplía desde la última tarea usada.
+        if (e.shiftKey && lastFocus.current) {
+          const id = rowId(e.target);
+          if (id) { e.preventDefault(); setSel({ a: sel?.a ?? lastFocus.current, b: id }); return; }
+        }
+        const t = e.target as Element;
+        anchor.current = rowId(t);
+        down.current = !t.closest('button, input[type="checkbox"]');
+        if (sel) setSel(null);
       }}
-      onMouseDown={() => allSel && setAllSel(false)}
-      onCopy={onCopy} onCut={onCut} onPaste={(e) => { if (e.target === e.currentTarget) onPaste(e, null); }}>
+      onMouseUp={() => { down.current = false; setRanging(false); }}>
       {total > 0 && (
         <div className="progress-row">
           <div className="progress" aria-label={`${done} de ${total} hechas`}><span style={{ width: `${Math.round((done / total) * 100)}%` }} /></div>
@@ -107,58 +167,77 @@ export function CheckBody({ card }: { card: CheckCard }) {
         </div>
       )}
       {items.map((it, i) => {
-        if (it.level === 0) hideUntilTop = false;
-        const ch = it.level === 0 ? kids(i) : [];
-        if (it.level === 0 && ch.length && collapsed.has(it.id)) hideUntilTop = true;
-        else if (it.level === 1 && hideUntilTop) return null;
-        const doneKids = ch.filter((k) => k.done).length;
-        const partial = ch.length > 0 && doneKids > 0 && doneKids < ch.length;
-        const checked = ch.length ? doneKids === ch.length : it.done;
+        if (!shown.has(it.id)) return null;
+        const kids = eff.hasKids[i];
+        const checked = eff.done[i];
+        const partial = kids && eff.leavesDone[i] > 0 && eff.leavesDone[i] < eff.leaves[i];
+        const end = descEnd(items, i);
+        const toggle = () => {
+          const v = !checked;
+          set(items.map((x, k) => (k >= i && k < end ? { ...x, done: v } : x)));
+        };
         return (
-          <div key={it.id} className="check-row" style={{ paddingLeft: it.level * 22 }}>
-            {it.level === 0 && (
-              <>
-                {ch.length > 0
-                  ? <button className="fold" aria-label={collapsed.has(it.id) ? 'Desplegar subtareas' : 'Plegar subtareas'} aria-expanded={!collapsed.has(it.id)}
-                      onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(it.id)) n.delete(it.id); else n.add(it.id); return n; })}>{collapsed.has(it.id) ? '▸' : '▾'}</button>
-                  : <span className="fold" />}
-                <button className="fold add-sub" title="Añadir subtarea" aria-label="Añadir subtarea" onClick={() => addSub(it.id)}>+</button>
-              </>
-            )}
-            <input type="checkbox" checked={checked} ref={(el) => { if (el) el.indeterminate = partial; }} aria-label="Hecha"
-              onChange={() => {
-                if (ch.length) ch.forEach((k) => dispatch({ t: 'checkItem', card: card.id, item: k.id, patch: { done: !checked } }));
-                dispatch({ t: 'checkItem', card: card.id, item: it.id, patch: { done: !checked } });
-              }} />
+          <div key={it.id} data-item={it.id} className={'check-row' + (selected.has(it.id) ? ' selected' : '')} style={{ paddingLeft: it.level * 24 }}
+            onMouseEnter={() => enterRow(it.id)}>
+            {kids
+              ? <button className="fold" aria-label={collapsed.has(it.id) ? 'Desplegar subtareas' : 'Plegar subtareas'} aria-expanded={!collapsed.has(it.id)}
+                  onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(it.id)) n.delete(it.id); else n.add(it.id); return n; })}>{collapsed.has(it.id) ? '▸' : '▾'}</button>
+              : <span className="fold" />}
+            {it.level < MAX_LEVEL
+              ? <button className="fold add-sub" title="Añadir subtarea" aria-label="Añadir subtarea" onClick={() => addSub(it.id)}>+</button>
+              : <span className="fold" />}
+            <input type="checkbox" checked={checked} ref={(el) => { if (el) el.indeterminate = partial; }} aria-label="Hecha" onChange={toggle} />
             <textarea
               id={'it-' + it.id}
               rows={1}
               className={'check-text' + (checked ? ' done' : '')}
               value={it.text}
               placeholder="Escribe una tarea…"
+              onFocus={() => { lastFocus.current = it.id; }}
               onChange={(e) => dispatch({ t: 'checkItem', card: card.id, item: it.id, patch: { text: e.target.value.replace(/\n/g, ' ') } })}
-              onPaste={(e) => { e.stopPropagation(); onPaste(e, it); }}
+              onPaste={(e) => {
+                const text = e.clipboardData.getData('text/plain');
+                if (!text || !looksLikeList(text)) return; // texto normal: lo inserta el campo
+                if (pasteList(text, it)) { e.preventDefault(); e.stopPropagation(); }
+              }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); const id = uid('it'); dispatch({ t: 'addCheckItem', card: card.id, after: ch.length ? ch[ch.length - 1].id : it.id, id, level: ch.length ? 0 : undefined }); focus(id); }
-                // Tab: subtarea de la anterior; Mayús+Tab lo deshace.
-                if (e.key === 'Tab') { e.preventDefault(); if (e.shiftKey) dispatch({ t: 'checkItem', card: card.id, item: it.id, patch: { level: 0 } }); else if (i > 0 && !ch.length) dispatch({ t: 'checkItem', card: card.id, item: it.id, patch: { level: 1 } }); }
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  // La tarea nueva va después de las subtareas de esta y al mismo nivel.
+                  const id = uid('it');
+                  dispatch({ t: 'addCheckItem', card: card.id, after: items[end - 1].id, id, level: it.level });
+                  focus(id);
+                }
+                // Tab: sube un nivel (subtarea de la anterior, con todo lo suyo); Mayús+Tab baja un nivel.
+                if (e.key === 'Tab') {
+                  e.preventDefault();
+                  const next = shiftSubtree(items, it.id, e.shiftKey ? -1 : 1);
+                  if (next) set(next);
+                }
                 if (e.key === 'Backspace' && !it.text && items.length > 1) { e.preventDefault(); dispatch({ t: 'removeCheckItem', card: card.id, item: it.id }); const prev = items[i - 1]; if (prev) focus(prev.id); }
                 // ↑ ↓ pasan a la tarea anterior o siguiente; en un texto de varias líneas, solo desde la primera o la última.
                 if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-                  const el = e.currentTarget;
-                  const n = visualLines(el);
-                  const edge = e.key === 'ArrowUp' ? caretLine(el) === 0 : caretLine(el) >= n - 1;
-                  if (edge && move(it.id, e.key === 'ArrowUp' ? -1 : 1)) e.preventDefault();
+                  if (caretAtEdge(e.currentTarget, e.key === 'ArrowUp' ? 'up' : 'down') && move(it.id, e.key === 'ArrowUp' ? -1 : 1)) e.preventDefault();
                 }
               }}
             />
-            {ch.length > 0 && <span className="small muted">{doneKids}/{ch.length}</span>}
+            {kids && <span className="small muted">{eff.leavesDone[i]}/{eff.leaves[i]}</span>}
           </div>
         );
       })}
       <div className="row wrap">
         <button className="link small" onClick={addTask}>+ Añadir tarea</button>
       </div>
+      <textarea ref={proxy} className="check-proxy" tabIndex={-1} aria-label="Tareas seleccionadas (para copiar, cortar o pegar)" readOnly={false}
+        onCut={() => { window.setTimeout(removeBlock, 0); }}
+        onPaste={(e) => {
+          const text = e.clipboardData.getData('text/plain');
+          if (!text) return;
+          e.preventDefault();
+          if (!pasteList(text, null)) clearSel(true);
+        }}
+        onChange={() => { if (proxy.current) proxy.current.value = checklistToMarkdown(block); }}
+      />
     </div>
   );
 }

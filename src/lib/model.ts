@@ -1,8 +1,8 @@
 import type { Opt, Pm } from './pm';
 import type { PmTemplate } from './pmio';
 import type { Country } from './holidays';
-import type { IconStyle } from './icons';
-import { DEFAULT_COLOR_ICON, DEFAULT_ICON_STYLE, normalizeColorIcon, normalizeIconStyle } from './icons';
+import type { IconStyle, ViewIcons } from './icons';
+import { DEFAULT_COLOR_ICON, DEFAULT_ICON_STYLE, normalizeColorIcon, normalizeIconStyle, normalizeViewIcons } from './icons';
 // Modelo de datos de Cuaderno. Todo se guarda como documentos { id, kind, parent, pos, data }
 // en el núcleo de Rust; estos tipos son la forma que tienen esos datos en la interfaz.
 
@@ -38,7 +38,8 @@ export type Project = {
 export type Folder = { id: string; name: string; collapsed: boolean; pos: number };
 export const folderToDoc = (f: Folder): Doc => { const { id, pos, ...data } = f; return { id, kind: 'folder', parent: null, pos, updated: Date.now(), data }; };
 
-export type CheckItem = { id: string; text: string; done: boolean; level: 0 | 1 };
+/** `level`: 0 = tarea, 1 = subtarea, 2 = sub-subtarea… (hasta MAX_LEVEL en lib/checklist.ts). */
+export type CheckItem = { id: string; text: string; done: boolean; level: number };
 export type TableRow = { id: string; cells: string[] };
 
 type CardBase = {
@@ -87,6 +88,8 @@ export type Settings = {
   /** Estilo de los iconos de la app y icono del botón de color de las tarjetas. */
   iconStyle: IconStyle;
   colorIcon: string;
+  /** Icono de cada entrada de la barra lateral (las que no aparecen usan el predeterminado). */
+  viewIcons: ViewIcons;
   lang: Language;
   /** Formato de hora: 24 h o 12 h. */
   hour12: boolean;
@@ -179,7 +182,7 @@ export function normalizeBackup(raw: Partial<Settings> & { autoBackup?: { dir?: 
   return base;
 }
 
-export const DEFAULT_SETTINGS: Settings = { sessionName: 'Cuaderno', sessionFont: DEFAULT_SESSION_FONT, side: DEFAULT_SIDE, iconStyle: DEFAULT_ICON_STYLE, colorIcon: DEFAULT_COLOR_ICON, lang: 'es', hour12: false, sound: false, showMissed: true, focus: 'soft', snapOnOpen: true, reduceMotion: false, autoLockMinutes: 15, snap: true, grid: 24, notify: true, leadMin: 0, country: 'ES', weekStart: 1, dayStart: 7, dayEnd: 22, calView: 'month', weekNumbers: false, calLook: DEFAULT_CALLOOK, backup: DEFAULT_BACKUP, updateCheck: true };
+export const DEFAULT_SETTINGS: Settings = { sessionName: 'Cuaderno', sessionFont: DEFAULT_SESSION_FONT, side: DEFAULT_SIDE, iconStyle: DEFAULT_ICON_STYLE, colorIcon: DEFAULT_COLOR_ICON, viewIcons: {}, lang: 'es', hour12: false, sound: false, showMissed: true, focus: 'soft', snapOnOpen: true, reduceMotion: false, autoLockMinutes: 15, snap: true, grid: 24, notify: true, leadMin: 0, country: 'ES', weekStart: 1, dayStart: 7, dayEnd: 22, calView: 'month', weekNumbers: false, calLook: DEFAULT_CALLOOK, backup: DEFAULT_BACKUP, updateCheck: true };
 
 export function uid(prefix: string): string {
   const r = new Uint8Array(8);
@@ -234,7 +237,7 @@ export function fromDocs(docs: Doc[]): { projects: Project[]; cards: Card[]; set
     if (d.kind === 'project') { const p = { trashed: null, links: [], ...(data as Omit<Project, 'id' | 'pos'>), id: d.id, pos: d.pos } as Project; p.theme = normalizeTheme(p.theme); projects.push(p); }
     else if (d.kind === 'asset' && d.parent) assets[d.id] = { id: d.id, card: d.parent, mime: String(data.mime ?? ''), data: String(data.data ?? '') };
     else if (d.kind === 'card' && d.parent && CARD_TYPES.includes(data.type as CardType)) cards.push(normalizeCard(data, d.id, d.parent, d.pos, i++));
-    else if (d.kind === 'settings') { const st = { ...DEFAULT_SETTINGS, ...(data as Partial<Settings>) }; st.sessionFont = normalizeFont(st.sessionFont, DEFAULT_SESSION_FONT); st.side = normalizeSide(st.side); st.iconStyle = normalizeIconStyle(st.iconStyle); st.colorIcon = normalizeColorIcon(st.colorIcon); st.backup = normalizeBackup(data as never); delete (st as { autoBackup?: unknown }).autoBackup; settings = st; }
+    else if (d.kind === 'settings') { const st = { ...DEFAULT_SETTINGS, ...(data as Partial<Settings>) }; st.sessionFont = normalizeFont(st.sessionFont, DEFAULT_SESSION_FONT); st.side = normalizeSide(st.side); st.iconStyle = normalizeIconStyle(st.iconStyle); st.colorIcon = normalizeColorIcon(st.colorIcon); st.viewIcons = normalizeViewIcons(st.viewIcons); st.backup = normalizeBackup(data as never); delete (st as { autoBackup?: unknown }).autoBackup; settings = st; }
     else if (d.kind === 'pmtpls') pmTemplates = Array.isArray((data as { list?: PmTemplate[] }).list) ? (data as { list: PmTemplate[] }).list : [];
     else if (d.kind === 'tags') tags = Array.isArray((data as { tags?: Opt[] }).tags) ? (data as { tags: Opt[] }).tags : [];
     else if (d.kind === 'folder') folders.push({ name: String(data.name ?? ''), collapsed: !!data.collapsed, id: d.id, pos: d.pos });

@@ -6,7 +6,8 @@ import { AMBIENTS, AMBIENT_IDS, BOARD_COLORS, BOARD_COLOR_IDS, CARD_THEMES, CARD
 import type { FontStyle, FontWeight, FontSize, Texture, Theme } from '../lib/appearance';
 import type { Project } from '../lib/model';
 import { DEFAULT_CALLOOK } from '../lib/model';
-import { COLOR_ICONS, DEFAULT_COLOR_ICON, DEFAULT_ICON_STYLE, ICON_STYLES, normalizeColorIcon, normalizeIconStyle } from '../lib/icons';
+import { COLOR_ICONS, DEFAULT_COLOR_ICON, DEFAULT_ICON_STYLE, ICON_KEYS, ICON_STYLES, VIEW_ICONS, iconLabel, normalizeColorIcon, normalizeIconStyle, normalizeViewIcons, viewIconOf } from '../lib/icons';
+import type { ViewIconId } from '../lib/icons';
 import { Icon } from './Icon';
 
 const SWATCH_BG: Record<string, string> = Object.fromEntries(FONT_COLORS.filter((c) => c.id && c.id !== 'task').map((c) => [c.id!, c.id!]));
@@ -75,9 +76,11 @@ export function SidePanel({ onClose }: { onClose: () => void }) {
   const side = state.settings.side;
   const iconStyle = normalizeIconStyle(state.settings.iconStyle);
   const colorIcon = normalizeColorIcon(state.settings.colorIcon);
+  const viewIcons = state.settings.viewIcons;
+  const [editingView, setEditingView] = useState<ViewIconId | null>(null);
   const set = (patch: Partial<typeof side>) => dispatch({ t: 'settings', patch: { side: { ...side, ...patch } } });
   return (
-    <Panel title="Personalizar barra" scope="Toda la app" onClose={onClose} foot={<button className="tool" onClick={() => dispatch({ t: 'settings', patch: { side: DEFAULT_SIDE, iconStyle: DEFAULT_ICON_STYLE, colorIcon: DEFAULT_COLOR_ICON } })}>Restablecer</button>}>
+    <Panel title="Personalizar barra" scope="Toda la app" onClose={onClose} foot={<button className="tool" onClick={() => dispatch({ t: 'settings', patch: { side: DEFAULT_SIDE, iconStyle: DEFAULT_ICON_STYLE, colorIcon: DEFAULT_COLOR_ICON, viewIcons: {} } })}>Restablecer</button>}>
       <div className="ap-field">
         <span className="menu-label">Color · {SIDE_COLORS[side.color].name}</span>
         <div className="swatch-row">{SIDE_COLOR_IDS.map((k) => <button key={k} className={'swatch' + (side.color === k ? ' on' : '')} title={SIDE_COLORS[k].name} aria-label={SIDE_COLORS[k].name} style={{ background: SIDE_COLORS[k].bg }} onClick={() => set({ color: k })} />)}</div>
@@ -93,6 +96,31 @@ export function SidePanel({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
+      </div>
+      <div className="ap-field">
+        <span className="menu-label">Iconos de la barra{editingView ? ' · ' + VIEW_ICONS.find((x) => x.id === editingView)?.name : ''}</span>
+        <div className="view-icons">
+          {VIEW_ICONS.map((v) => (
+            <button key={v.id} className={'view-icon' + (editingView === v.id ? ' on' : '')} aria-pressed={editingView === v.id} aria-label={'Icono de ' + v.name + ': ' + iconLabel(viewIconOf(viewIcons, v.id))} title={v.name} onClick={() => setEditingView(editingView === v.id ? null : v.id)}>
+              <Icon name={viewIconOf(viewIcons, v.id)} size={18} /><span className="small">{v.name}</span>
+            </button>
+          ))}
+        </div>
+        {editingView && (() => {
+          const def = VIEW_ICONS.find((x) => x.id === editingView)!;
+          const cur = viewIconOf(viewIcons, editingView);
+          const pick = (k: string) => dispatch({ t: 'settings', patch: { viewIcons: normalizeViewIcons({ ...viewIcons, [editingView]: k }) } });
+          return (
+            <div className="icon-picker" role="group" aria-label={'Elegir icono de ' + def.name}>
+              <div className="icon-grid">
+                {ICON_KEYS.map((k) => (
+                  <button key={k} className={'icon-cell' + (cur === k ? ' on' : '')} aria-pressed={cur === k} title={iconLabel(k) + (k === def.def ? ' (predeterminado)' : '')} aria-label={iconLabel(k)} onClick={() => pick(k)}><Icon name={k} size={18} /></button>
+                ))}
+              </div>
+              <button className="tool small-btn" disabled={cur === def.def} onClick={() => pick(def.def)}>Predeterminado ({iconLabel(def.def)})</button>
+            </div>
+          );
+        })()}
       </div>
       <div className="ap-field">
         <span className="menu-label">Icono del botón de color · {COLOR_ICONS.find((x) => x.id === colorIcon)?.name}</span>
