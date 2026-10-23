@@ -67,11 +67,58 @@ En el tablero, cada fila de la tarjeta Tabla PM muestra las 3 primeras columnas 
 - Los iconos propios de cada tarea principal se estrenan en la Fase 6 (barra lateral).
 - Archivos nuevos: `lib/color.ts`, `lib/icons.ts`, `lib/iconData.ts`, `components/ColorPicker.tsx`, `components/Icon.tsx`.
 
+### Segunda corrección: copiar lo seleccionado con el ratón (23 de octubre de 2026)
+
+- **Fallo:** tras seleccionar tareas arrastrando el ratón no se podía copiar. Al soltar, el foco no quedaba en el cuadro oculto del portapapeles. Ahora, al soltar el ratón (también fuera de la lista), el foco vuelve a ese cuadro, y Copiar y Cortar se atienden también en la propia tarjeta (`onCopy`/`onCut`). Ctrl+C copia el bloque como Markdown, igual que tras Ctrl+A. Prueba: `mejoras110.test.tsx`.
+
 ### Selector de color: corrección (23 de octubre de 2026)
 
 - **Fallo:** el cuadro de color y la barra de tono no respondían hasta cambiar antes un número. Causa: se leía la referencia al elemento antes de que existiera, en el primer dibujo. Ahora se usa el elemento del propio evento. Una prueba falla con el código antiguo.
 - **Orden de los campos:** H, S, B juntos en una columna y R, G, B juntos en otra; el HEX debajo.
+- **Iconos (mejora):** cada campo lleva un icono: tono = rueda de color, saturación = gota a medias, brillo = sol; R, G y B = un punto rojo, verde y azul. Son SVG propios dentro del componente.
+
+## 6 · Tabla PM: arrastrar columnas sin tirones (Fase 2)
+
+**Fecha:** 23 de octubre de 2026
+
+**Causa.** En cada movimiento del ratón se guardaba el estado del arrastre y React volvía a dibujar la tabla entera (hasta 100 filas por todas sus columnas), aunque la columna de destino no hubiera cambiado.
+
+**Cambio.** El resaltado de la columna (o fila) de destino se pone y quita directamente en el DOM, sin estado de React, y se actualiza como mucho una vez por fotograma (`requestAnimationFrame`) y solo cuando cambia el destino. Al soltar se hace una sola operación (`moveCol` o `moveRow`). Aspecto y comportamiento iguales. El arrastre de filas usa el mismo código y también mejora.
+
+**Archivos.** `views/PmTable.tsx`. Prueba nueva: `pmdrag.test.tsx` (el elemento destacado es el mismo del DOM, no se redibuja).
+
+**Pendiente de ver en tu PC:** cómo se siente con una tabla grande.
+
+## 7 · Tabla como hoja de cálculo (Fase 3a)
+
+**Fecha:** 23 de octubre de 2026
+
+La tarjeta Tabla se comporta como Excel. Las cabeceras cuentan como la fila superior de la cuadrícula.
+
+- **Seleccionar y editar:** un clic selecciona la celda; doble clic, F2 o simplemente escribir la editan (escribir reemplaza el contenido). Enter confirma y baja (en la última fila crea otra), Tab confirma y va a la derecha, Esc cancela.
+- **Flechas** mueven la celda activa; Mayús+flecha o arrastrar con el ratón amplían el rango; Ctrl/⌘+flecha salta al borde. Enter, Mayús+Enter, Tab y Mayús+Tab también mueven.
+- **Toda la tabla:** Ctrl/⌘+A selecciona todas las celdas y las cabeceras.
+- **Copiar, cortar y pegar:** Ctrl+C / X / V con texto separado por tabuladores (el formato de Excel, Calc y Google Sheets), con comillas y saltos de línea dentro de una celda. Una sola celda copiada rellena el rango elegido. Al pegar, la tabla crece con las filas y columnas que falten. Un pegado, un corte o un Supr son un solo paso de deshacer (acción nueva `tableSetRange`).
+- **Autocompletado:** al escribir aparecen, bajo la celda, valores y palabras de esa columna que empiezan igual (sin distinguir mayúsculas ni tildes). ↓/↑ eligen, Enter o Tab aceptan, o clic.
+- Supr / Retroceso vacían lo seleccionado. Ctrl+Z y Ctrl+Y funcionan sin salir de la tabla.
+- Aún no están: las operaciones matemáticas (Fase 4) y la barra de formato (Fase 5).
+- Archivos: `lib/grid.ts` (motor sin interfaz), `components/cards/TableBody.tsx`, `lib/store.ts`. Pruebas: `grid.test.ts` y `tablegrid.test.tsx`. Una prueba antigua (`app.test.tsx`) lee ahora el texto de la celda, no el valor de un cuadro de texto.
+
+## 8 · Tabla PM como hoja de cálculo (Fase 3b)
+
+**Fecha:** 23 de octubre de 2026
+
+Mismo motor que la Tabla (`lib/grid.ts`), aplicado a las celdas de la Tabla PM de la vista Tabla.
+
+- **Un clic selecciona, doble clic edita.** Texto y números se editan en la propia celda. Las celdas de menú (estado, selección, etiquetas, fecha, relación, imágenes) abren su menú con doble clic o F2, no con un clic. La casilla se marca con doble clic o con la barra espaciadora. Los botones propios de la fila (abrir página, cronómetro) siguen funcionando con un clic.
+- **Teclado:** flechas, Mayús+flecha, Ctrl+flecha, Tab, Enter (baja; en la última fila crea otra), F2, escribir para reemplazar, Esc (cancela la edición; después suelta la selección; después cierra la tabla), Supr, Ctrl+A (toda la tabla visible), Ctrl+Z / Ctrl+Y.
+- **Copiar, cortar y pegar rangos** como texto con tabuladores. Se copia el mismo texto que la exportación a CSV (decimales con coma, fechas dd/mm/aaaa). Al pegar, cada texto se convierte al tipo de su columna: números (`1.234,5`), fechas, casillas (Sí/No), opciones y estados por su nombre. Lo que no se puede aplicar (opción o estado que no existe, número ilegible, columnas calculadas como progreso, fórmula, resumen, cronómetro, relación o imágenes) se ignora y la celda queda como estaba. Si se pegan más filas que las que hay, se añaden al final. Una celda copiada rellena el rango elegido. Pegar, cortar o Supr son un solo paso de deshacer (operación nueva `batch`).
+- **Autocompletado** en las columnas de texto con las palabras de esa columna (↓/↑ eligen, Tab o Enter aceptan, o clic). Componente compartido con la Tabla: `components/SuggestList.tsx`.
+- La página de fila no cambia: sus campos se editan directamente.
+- Archivos: `views/PmTable.tsx`, `lib/pmgrid.ts`, `lib/pm.ts` (`batch`). Pruebas: `pmgrid.test.tsx`, `pmgrid.test.ts`. Cuatro pruebas antiguas se adaptaron al nuevo gesto (doble clic para abrir menús; leer el texto de la celda).
+- Los totales, filtros, orden, agrupación y paginación funcionan igual; las posiciones de la selección son las de las filas que se ven.
+- Aún no están: las fórmulas con referencias (Fase 4) y la barra de formato (Fase 5).
 
 ## Comprobación de la Fase 1
 
-En la nube: `npx tsc --noEmit` sin errores, 145 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.
+En la nube: `npx tsc --noEmit` sin errores, 166 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.

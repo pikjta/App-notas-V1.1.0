@@ -91,7 +91,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 **Común a todas.**
 
 - **Franja superior:** se arrastra para mover la tarjeta y muestra su tipo y tres botones: «Color de la tarjeta», «Abrir en grande» y «Eliminar tarjeta» (va a la papelera: «Tarjeta movida a la papelera»).
-- **Colores:** Automático (según el tablero), Mantequilla, Melocotón, Rosa, Lila, Cielo, Menta, Papel, Tinta, Bosque y los de etiqueta Ilustración, Pintura, Cliente, Urgente y Digital. **En la app** (mejora 1.1.0) el botón de color es un icono (paleta por defecto, configurable en «Personalizar barra») que abre «Color de la tarjeta»: un selector libre con cuadro de saturación y brillo, barra de tono, campos HSB en una columna y RGB en otra, HEX, el color nuevo junto al actual y los botones «Automático», «Cancelar» y «Aceptar». Ya no hay colores predefinidos; las tarjetas que tenían uno lo conservan. El texto se contrasta solo.
+- **Colores:** Automático (según el tablero), Mantequilla, Melocotón, Rosa, Lila, Cielo, Menta, Papel, Tinta, Bosque y los de etiqueta Ilustración, Pintura, Cliente, Urgente y Digital. **En la app** (mejora 1.1.0) el botón de color es un icono (paleta por defecto, configurable en «Personalizar barra») que abre «Color de la tarjeta»: un selector libre con cuadro de saturación y brillo, barra de tono, campos HSB en una columna y RGB en otra (cada uno con su icono: rueda de color, gota, sol, y un punto rojo, verde y azul), HEX, el color nuevo junto al actual y los botones «Automático», «Cancelar» y «Aceptar». Ya no hay colores predefinidos; las tarjetas que tenían uno lo conservan. El texto se contrasta solo.
 - **Título:** editable («Sin título»).
 - **Tamaño:** se cambia desde la esquina inferior.
 - **Abrir en grande:** muestra la tarjeta en la ventana «Tarjeta en grande», con el mismo contenido y controles, su color, su título y «Cerrar (Esc)».
@@ -100,7 +100,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 
 - Tareas con casilla y subtareas plegables. Las tareas con subtareas muestran un estado parcial y su contador.
 - Botones «Añadir tarea» y «Añadir subtarea» (pregunta «¿Dentro de qué tarea?»). **En la app** (mejora 1.1.0) solo queda «+ Añadir tarea» abajo; cada tarea y cada subtarea tiene un botón (+) junto al de plegar que añade una subtarea (hasta 5 niveles, con la viñeta de cada nivel más a la derecha), y ya no existe la pregunta «¿Dentro de qué tarea?».
-- Atajo: Tab convierte una tarea en subtarea de la anterior y Mayús+Tab lo deshace. **En la app** (mejora 1.1.0): el texto largo se parte en varias líneas (en cualquier carácter, como una terminal); ↑ y ↓ pasan a la tarea anterior o siguiente (en un texto de varias líneas, desde la primera o la última); Ctrl+A selecciona todas las tareas (también se pueden seleccionar con el ratón arrastrando de una tarea a otra o con Mayús+clic; dentro de una tarea el ratón selecciona texto con normalidad), Ctrl+C las copia como Markdown (`- [ ] tarea`, con sangría para las subtareas), Ctrl+X las corta y Ctrl+V pega varias líneas como varias tareas (con todo seleccionado, reemplaza la lista).
+- Atajo: Tab convierte una tarea en subtarea de la anterior y Mayús+Tab lo deshace. **En la app** (mejora 1.1.0): el texto largo se parte en varias líneas (en cualquier carácter, como una terminal); ↑ y ↓ pasan a la tarea anterior o siguiente (en un texto de varias líneas, desde la primera o la última); Ctrl+A selecciona todas las tareas (también se pueden seleccionar con el ratón arrastrando de una tarea a otra o con Mayús+clic, y se copian igual con Ctrl+C; dentro de una tarea el ratón selecciona texto con normalidad), Ctrl+C las copia como Markdown (`- [ ] tarea`, con sangría para las subtareas), Ctrl+X las corta y Ctrl+V pega varias líneas como varias tareas (con todo seleccionado, reemplaza la lista).
 - La tarjeta muestra su progreso, que suma al de la tarea principal.
 
 **Recordatorio.**
@@ -110,7 +110,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 
 **Nota.** Texto en Markdown con barra de formato y enlaces `[[ ]]` (ver apartado 5). Si está vacía: «Nota vacía. Haz clic para escribir en Markdown.».
 
-**Tabla.** Tabla simple con cabeceras editables, «Añadir columna», «Eliminar columna», celdas editables, «+ Nueva fila» y «Eliminar fila».
+**Tabla.** Tabla simple con cabeceras editables, «Añadir columna», «Eliminar columna», celdas editables, «+ Nueva fila» y «Eliminar fila». **En la app** (mejora 1.1.0) la tabla se maneja como una hoja de cálculo: clic selecciona, doble clic o escribir edita, las flechas se mueven (Mayús o arrastrar amplían el rango), Ctrl+A elige toda la tabla, Ctrl+C / X / V copian, cortan y pegan rangos (texto con tabuladores, compatible con Excel; la tabla crece al pegar) y al escribir se sugieren palabras de la misma columna.
 
 **Tabla PM.**
 
@@ -167,6 +167,8 @@ Gestor de proyectos estilo Notion dentro de una tarjeta. Se abre en grande en un
 - Tabla vacía (solo una columna de texto).
 
 Las plantillas propias aparecen con la etiqueta «TUYA» y se pueden eliminar.
+
+**En la app (mejora 1.1.0) · vista Tabla como hoja de cálculo.** Un clic selecciona una celda; doble clic, F2 o escribir la editan (los menús de estado, selección, etiquetas, fecha, relación e imágenes se abren con doble clic o F2). Flechas, Mayús o arrastrar para elegir un rango, Ctrl+A para toda la tabla, Ctrl+C / X / V para copiar, cortar y pegar rangos con texto separado por tabuladores (cada texto se convierte al tipo de su columna; si se pegan más filas, se añaden), Supr para vaciar, y sugerencias de autocompletado con las palabras de la misma columna en las columnas de texto.
 
 **Cabecera de la tabla abierta.**
 
