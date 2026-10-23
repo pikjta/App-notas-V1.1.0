@@ -81,6 +81,8 @@ export type Action =
   | { t: 'tableCell'; card: string; row: string; col: number; value: string }
   | { t: 'tableHead'; card: string; col: number; value: string }
   | { t: 'tableAddRow'; card: string; id: string }
+  /** Escribe una matriz de textos desde (r0, c0); r0 = -1 es la fila de cabeceras. Crea las filas (con `ids`) y columnas que falten. Un solo paso de deshacer. */
+  | { t: 'tableSetRange'; card: string; r0: number; c0: number; data: string[][]; ids: string[] }
   | { t: 'tableRemoveRow'; card: string; row: string }
   | { t: 'tableAddCol'; card: string }
   | { t: 'tableRemoveCol'; card: string; col: number }
@@ -388,6 +390,21 @@ export function reduce(s: State, a: Action): Effect {
           items = [...items.slice(0, at), { id: a.id, text: '', done: false, level }, ...items.slice(at)];
         }
         return { ...c, items: normalizeLevels(items) };
+      });
+    case 'tableSetRange':
+      return withCard(a.card, (c) => {
+        if (c.type !== 'table') return c;
+        let heads = [...c.heads];
+        let rows = c.rows.map((r) => ({ ...r, cells: [...r.cells] }));
+        const w = a.data.reduce((n, r) => Math.max(n, r.length), 0);
+        while (heads.length < a.c0 + w) { heads.push('Columna ' + (heads.length + 1)); rows.forEach((r) => r.cells.push('')); }
+        let used = 0;
+        while (rows.length < a.r0 + a.data.length) { rows.push({ id: a.ids[used++] ?? uid('row'), cells: heads.map(() => '') }); }
+        a.data.forEach((line, i) => line.forEach((v, j) => {
+          const r = a.r0 + i, k = a.c0 + j;
+          if (r < 0) heads[k] = v; else rows[r].cells[k] = v;
+        }));
+        return { ...c, heads, rows };
       });
     case 'tableCell':
     case 'tableHead':

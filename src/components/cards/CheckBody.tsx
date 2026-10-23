@@ -21,6 +21,8 @@ export function CheckBody({ card }: { card: CheckCard }) {
   const total = items.filter((i) => i.text).length;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [sel, setSel] = useState<Sel | null>(null);
+  const selRef = useRef<Sel | null>(null);
+  selRef.current = sel;
   const root = useRef<HTMLDivElement>(null);
   const proxy = useRef<HTMLTextAreaElement>(null);
   const lastFocus = useRef<string | null>(null);
@@ -55,7 +57,7 @@ export function CheckBody({ card }: { card: CheckCard }) {
   }, [sel, card.items]);
   // Si el ratón se suelta fuera de la lista, termina el arrastre igualmente.
   useEffect(() => {
-    const up = () => { down.current = false; setRanging(false); };
+    const up = () => { down.current = false; setRanging(false); if (selRef.current) window.setTimeout(() => { const p = proxy.current; if (p && selRef.current) { p.focus({ preventScroll: true }); p.select(); } }, 0); };
     window.addEventListener('mouseup', up);
     return () => window.removeEventListener('mouseup', up);
   }, []);
@@ -159,7 +161,13 @@ export function CheckBody({ card }: { card: CheckCard }) {
         down.current = !t.closest('button, input[type="checkbox"]');
         if (sel) setSel(null);
       }}
-      onMouseUp={() => { down.current = false; setRanging(false); }}>
+      onMouseUp={() => {
+        down.current = false; setRanging(false);
+        // Al soltar el ratón con tareas seleccionadas, el foco vuelve al cuadro oculto para que Ctrl+C copie.
+        if (sel) window.setTimeout(() => { const p = proxy.current; if (p) { p.focus({ preventScroll: true }); p.select(); } }, 0);
+      }}
+      onCopy={(e) => { if (sel && block.length) { e.preventDefault(); e.clipboardData?.setData('text/plain', checklistToMarkdown(block)); } }}
+      onCut={(e) => { if (sel && block.length) { e.preventDefault(); e.clipboardData?.setData('text/plain', checklistToMarkdown(block)); window.setTimeout(removeBlock, 0); } }}>
       {total > 0 && (
         <div className="progress-row">
           <div className="progress" aria-label={`${done} de ${total} hechas`}><span style={{ width: `${Math.round((done / total) * 100)}%` }} /></div>
@@ -229,7 +237,6 @@ export function CheckBody({ card }: { card: CheckCard }) {
         <button className="link small" onClick={addTask}>+ Añadir tarea</button>
       </div>
       <textarea ref={proxy} className="check-proxy" tabIndex={-1} aria-label="Tareas seleccionadas (para copiar, cortar o pegar)" readOnly={false}
-        onCut={() => { window.setTimeout(removeBlock, 0); }}
         onPaste={(e) => {
           const text = e.clipboardData.getData('text/plain');
           if (!text) return;

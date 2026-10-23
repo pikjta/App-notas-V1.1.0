@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
 
 afterEach(cleanup);
@@ -32,8 +32,8 @@ describe('Mejoras 1.1.0', () => {
     expect(card).toBeTruthy();
     await user.click(screen.getByText('Abrir tabla'));
     await user.click(screen.getByText('+ Nueva fila'));
-    await user.keyboard('Bocetos');
-    await user.keyboard('{Escape}');
+    await user.keyboard('Bocetos{Tab}');
+    await user.keyboard('{Escape}{Escape}');
     const row = document.querySelector('.pm-mini-row') as HTMLElement;
     expect(row.querySelectorAll('.pm-mini-cell').length).toBe(3);
     expect(row.textContent).toContain('Bocetos');
@@ -178,6 +178,22 @@ describe('Mejoras 1.1.0', () => {
     expect(selectedTexts().length).toBe(0);
     expect(boxes().map((b) => b.value)).toEqual(['Hola', 'Adiósx']);
   }, 30_000);
+
+  it('Checklist: lo seleccionado con el ratón se puede copiar (Ctrl+C) aunque el foco se pierda al soltar', async () => {
+    const user = userEvent.setup();
+    await newChecklist(user);
+    await user.type(screen.getByPlaceholderText('Escribe una tarea…'), 'Uno{Enter}Dos{Enter}Tres');
+    const rows = () => [...document.querySelectorAll<HTMLElement>('.check-row')];
+    fireEvent.mouseDown(boxes()[0], { button: 0 });
+    fireEvent.mouseEnter(rows()[1]);
+    (document.activeElement as HTMLElement).blur(); // el navegador deja el foco fuera
+    fireEvent.mouseUp(rows()[1]);
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(document.activeElement).toBe(proxy());
+    const setData = vi.fn();
+    fireEvent.copy(document.activeElement as HTMLElement, { clipboardData: { setData } });
+    expect(setData).toHaveBeenCalledWith('text/plain', '- [ ] Uno\n- [ ] Dos');
+  }, 30_000);
 });
 
 describe('Mejoras 1.1.0 · color e iconos', () => {
@@ -272,5 +288,14 @@ describe('Mejoras 1.1.0 · selector de color (correcciones)', () => {
     const groups = screen.getAllByRole('group').filter((g) => ['HSB', 'RGB'].includes(g.getAttribute('aria-label') ?? ''));
     expect(groups.map((g) => g.querySelectorAll('input').length)).toEqual([3, 3]);
     expect(groups.map((g) => [...g.querySelectorAll('.cp-num span')].map((x) => x.textContent).join(''))).toEqual(['HSB', 'RGB']);
+  }, 30_000);
+  it('Selector de color: icono en cada parámetro (H, S, B y un punto rojo, verde y azul)', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Inicio' });
+    await user.click(screen.getAllByLabelText('Color de la tarjeta')[0]);
+    const dlg = screen.getByRole('dialog', { name: 'Color de la tarjeta' });
+    expect(dlg.querySelectorAll('.cp-num .cp-glyph svg').length).toBe(6);
+    expect(dlg.querySelector('[aria-label="RGB"]')!.querySelectorAll('circle[fill]').length).toBe(3);
   }, 30_000);
 });

@@ -42,10 +42,19 @@ export function ColorPicker({ title, current, fallback, onPick, onClose }: { tit
     window.addEventListener('pointercancel', up);
   };
 
+  // Iconos de cada parámetro: tono (rueda de color), saturación (gota a medias), brillo (sol) y un punto del color de R, G y B.
+  const GLYPH: Record<string, React.ReactNode> = {
+    H: <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><defs><linearGradient id="cp-g-h" x1="0" x2="1"><stop offset="0" stopColor="#f33" /><stop offset=".2" stopColor="#fc3" /><stop offset=".4" stopColor="#3c3" /><stop offset=".6" stopColor="#3cf" /><stop offset=".8" stopColor="#33f" /><stop offset="1" stopColor="#f3c" /></linearGradient></defs><circle cx="8" cy="8" r="6.5" fill="url(#cp-g-h)" stroke="currentColor" strokeWidth="1" /></svg>,
+    S: <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 1.5C8 1.5 3 7 3 10a5 5 0 0 0 10 0c0-3-5-8.5-5-8.5Z" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M8 1.5C8 1.5 3 7 3 10a5 5 0 0 0 5 5V1.5Z" fill="currentColor" opacity=".45" /></svg>,
+    Br: <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor" /><g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" /></g></svg>,
+    R: <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="#e5383b" /></svg>,
+    G: <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="#2fb344" /></svg>,
+    Bl: <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="#2f6fed" /></svg>,
+  };
   const NAME: Record<string, string> = { H: 'Tono', S: 'Saturación', Br: 'Brillo', R: 'Rojo', G: 'Verde', Bl: 'Azul' };
   const num = (key: string, label: string, value: number, max: number, unit: string, onChange: (v: number) => void) => (
     <label className="cp-num">
-      <span>{label}</span>
+      <i className="cp-glyph" title={NAME[key]}>{GLYPH[key]}</i><span>{label}</span>
       <input type="number" min={0} max={max} value={value} aria-label={NAME[key]}
         onChange={(e) => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) onChange(Math.min(max, Math.max(0, v))); }} />
       <em>{unit}</em>

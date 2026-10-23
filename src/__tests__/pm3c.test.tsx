@@ -46,7 +46,7 @@ describe('Tabla PM · Fase 3c en la interfaz', () => {
     await user.selectOptions(within(page).getByLabelText('Repetir'), 'month');
     await user.click(within(page).getByLabelText('Estado'));
     await user.click(within(pop()).getByText('Entregado'));
-    expect((within(dlg).getAllByLabelText('Tarea') as HTMLInputElement[]).map((x) => x.value)).toEqual(['Factura mensual', 'Factura mensual', 'Bocetos']);
+    expect(within(dlg).getAllByLabelText('Tarea').map((x) => (x as HTMLInputElement).value || x.textContent)).toEqual(['Factura mensual', 'Factura mensual', 'Bocetos']);
     await user.click(within(page).getByLabelText('Cerrar página'));
 
     // Cronología: una fila sin fecha se fecha con un clic; los hitos se dibujan como ◆.

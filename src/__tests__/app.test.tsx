@@ -43,13 +43,13 @@ describe('app (navegador, puente en memoria)', () => {
     expect(screen.getByText(/Mañana a las 09:00/)).toBeTruthy();
     await user.click(screen.getByText('+ Añadir tarjeta'));
     await user.click(screen.getByRole('menuitem', { name: 'Tabla' }));
-    await user.type(screen.getByLabelText('Fila 1, Columna 1'), 'Andamio');
+    await user.type(screen.getByLabelText('Fila 1, Columna 1'), 'Andamio{Enter}');
 
     // Papelera y deshacer
     await user.click(screen.getAllByLabelText('Eliminar tarjeta').slice(-1)[0]);
     expect(screen.queryByLabelText('Fila 1, Columna 1')).toBeNull();
     await user.click(screen.getByLabelText('Deshacer'));
-    expect((screen.getByLabelText('Fila 1, Columna 1') as HTMLInputElement).value).toBe('Andamio');
+    expect(screen.getByLabelText('Fila 1, Columna 1').textContent).toBe('Andamio');
     await user.click(screen.getAllByLabelText('Eliminar tarjeta').slice(-1)[0]);
     await user.click(screen.getByText('Papelera', { selector: '.side-name' }));
     await user.click(await screen.findByText('Restaurar'));

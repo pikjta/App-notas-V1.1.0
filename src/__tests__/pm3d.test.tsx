@@ -36,7 +36,7 @@ describe('Tabla PM · Fase 3d en la interfaz', () => {
     await user.click(within(dlg).getByText('Relación', { selector: '.th-in span' }));
     await user.selectOptions(within(pop()).getByLabelText(/Tabla enlazada/), 'Materiales');
     await user.keyboard('{Escape}');
-    await user.click(within(dlg).getByLabelText('Relación'));
+    await user.dblClick(within(dlg).getByLabelText('Relación'));
     await user.click(within(pop()).getByText('Pintura'));
     await user.click(within(pop()).getByText('Barniz'));
     await user.type(within(pop()).getByLabelText('Alias de Barniz'), 'Barniz UV');

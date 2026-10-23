@@ -411,10 +411,13 @@ export type PmOp =
   | { op: 'viewDuplicate'; id: string; newId: string }
   | { op: 'viewRemove'; id: string }
   | { op: 'group'; col: string | null }
+  /** Varios cambios como un solo paso (pegar un rango, vaciar una selección). */
+  | { op: 'batch'; ops: PmOp[] }
   | { op: 'replace'; pm: Pm };
 
 export function pmReduce(pm: Pm, o: PmOp): Pm {
   switch (o.op) {
+    case 'batch': return o.ops.reduce(pmReduce, pm);
     case 'addRow': {
       const row: Row = { id: o.id, cells: o.cells ? { ...o.cells } : {} };
       const at = o.after ? pm.rows.findIndex((r) => r.id === o.after) + 1 : pm.rows.length;

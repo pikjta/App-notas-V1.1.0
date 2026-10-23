@@ -18,14 +18,14 @@ describe('Tabla PM en la interfaz', () => {
 
     // Filas con teclado: Enter crea la siguiente.
     await user.click(within(dlg).getByText('+ Nueva fila'));
-    await user.keyboard('Bocetos{Enter}Pintado del mural{Enter}Entrega');
-    const tareas = within(dlg).getAllByLabelText('Tarea') as HTMLInputElement[];
-    expect(tareas.map((t) => t.value)).toEqual(['Bocetos', 'Pintado del mural', 'Entrega']);
-    await user.click(tareas[2]); await user.keyboard('{ArrowUp}');
-    expect(document.activeElement).toBe(tareas[1]);
+    await user.keyboard('Bocetos{Enter}Pintado del mural{Enter}Entrega{Tab}');
+    const tareas = () => within(dlg).getAllByLabelText('Tarea');
+    expect(tareas().map((t) => t.textContent)).toEqual(['Bocetos', 'Pintado del mural', 'Entrega']);
+    await user.click(tareas()[2]); await user.keyboard('{ArrowUp}');
+    expect(document.querySelector('td.cur')).toBe(tareas()[1].closest('td'));
 
     // Estado agrupado por fases → progreso de la fila y de la tabla.
-    await user.click(within(dlg).getAllByLabelText('Estado')[1]);
+    await user.dblClick(within(dlg).getAllByLabelText('Estado')[1]);
     const pop = document.querySelector('.pm-pop') as HTMLElement;
     expect(within(pop).getByText('Desarrollo')).toBeTruthy();
     await user.click(within(pop).getByText('Aprobado'));
@@ -38,7 +38,7 @@ describe('Tabla PM en la interfaz', () => {
     expect(within(dlg).getByText('20,5 h')).toBeTruthy();
 
     // Etiqueta global creada desde la celda.
-    await user.click(within(dlg).getAllByLabelText('Etiquetas')[0]);
+    await user.dblClick(within(dlg).getAllByLabelText('Etiquetas')[0]);
     await user.type(within(document.querySelector('.pm-pop') as HTMLElement).getByLabelText('Buscar o crear'), 'Exterior{Enter}');
     expect(within(dlg).getAllByText('Exterior').length).toBeGreaterThan(0);
     await user.keyboard('{Escape}');

@@ -15,6 +15,10 @@ import { Kanban, KanbanPicker } from './pm/Kanban';
 import { ImageMenu, ImageThumbs, RelationMenu, RelPills } from './pm/Linked';
 import { checkFormula, FUNCTION_HELP, propsIn } from '../lib/formula';
 import { RowPage } from './pm/RowPage';
+import { allOf, inRect, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../lib/grid';
+import type { Dims, Pos, Sel } from '../lib/grid';
+import { copyValue, PASTABLE, pasteValue } from '../lib/pmgrid';
+import { SuggestList } from '../components/SuggestList';
 
 type Pop =
   | { kind: 'col'; col: string; x: number; y: number }
@@ -29,25 +33,50 @@ type Pop =
 const GRIP = 44;
 
 export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: string | null; onClose: () => void }) {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, undo, redo } = useApp();
   const card = state.cards.find((c) => c.id === cardId && c.type === 'pm') as PmCard | undefined;
   const [pop, setPop] = useState<Pop | null>(null);
-  const [drag, setDrag] = useState<{ kind: 'row' | 'col'; id: string; over: string | null } | null>(null);
   const [page, setPage] = useState<string | null>(rowId ?? null);
   const [query, setQuery] = useState('');
   const [folded, setFolded] = useState<Set<string>>(new Set());
   const [pageN, setPageN] = useState(0);
   const modal = useRef<HTMLDivElement>(null);
-  const pendingFocus = useRef<string | null>(null);
+  // Cuadrícula tipo hoja de cálculo: celda o rango elegido (por posición en lo que se ve) y celda en edición.
+  const [sel, setSel] = useState<Sel | null>(null);
+  const [editing, setEditing] = useState<Pos | null>(null);
+  const [hint, setHint] = useState(-1);
+  const pending = useRef<{ row: string; col: string; edit: boolean } | null>(null);
+  const api = useRef<{ rows: Row[]; cols: Col[] }>({ rows: [], cols: [] });
+  const proxy = useRef<HTMLTextAreaElement>(null);
+  const down = useRef(false);
+  const orig = useRef<CellVal>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (pop) setPop(null); else if (page) setPage(null); else onClose(); } };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [pop, page, onClose]);
+  // Tras añadir una fila: seleccionar (y editar) su celda en cuanto se dibuja.
   useLayoutEffect(() => {
-    if (pendingFocus.current) { document.getElementById(pendingFocus.current)?.focus(); pendingFocus.current = null; }
+    const p = pending.current;
+    if (!p) return;
+    const r = api.current.rows.findIndex((x) => x.id === p.row), c = api.current.cols.findIndex((x) => x.id === p.col);
+    if (r < 0 || c < 0) return;
+    pending.current = null;
+    setSel({ a: { r, c }, b: { r, c } });
+    setEditing(p.edit ? { r, c } : null);
   });
+  // Sin editar ni menús abiertos, el foco está en un cuadro oculto: así el teclado y copiar/cortar/pegar funcionan igual en todos los sistemas.
+  useLayoutEffect(() => { if (sel && !editing && !pop) proxy.current?.focus({ preventScroll: true }); }, [sel, editing, pop]);
+  useEffect(() => {
+    if (!sel) return;
+    (document.querySelector(`.pm-grid td[data-r="${sel.b.r}"][data-c="${sel.b.c}"]`) as HTMLElement | null)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [sel]);
+  useEffect(() => {
+    const up = () => { down.current = false; };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
   if (!card) return null;
 
   const pm = card.pm;
@@ -78,17 +107,8 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
     const id = pmId('row');
     op({ op: 'addRow', id, after });
     const target = focusCol ?? cols.find((c) => c.type === 'text')?.id;
-    if (target) pendingFocus.current = cellId(id, target);
-  };
-  /** ↑ ↓ y Enter para moverse entre filas en la misma columna. */
-  const nav = (e: React.KeyboardEvent, row: string, col: string) => {
-    const i = rows.findIndex((r) => r.id === row);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
-      e.preventDefault();
-      const next = rows[i + (e.key === 'ArrowUp' ? -1 : 1)];
-      if (next) document.getElementById(cellId(next.id, col))?.focus();
-      else if (e.key === 'Enter') addRow(row, col);
-    }
+    const t = cols.find((c) => c.id === target);
+    if (target) pending.current = { row: id, col: target, edit: t?.type === 'text' || t?.type === 'number' };
   };
 
   /** Arrastrar filas (por el asa) o columnas (por la cabecera). */
@@ -102,26 +122,43 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
       const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(kind === 'row' ? '[data-row]' : '[data-col]') as HTMLElement | null;
       return el ? (kind === 'row' ? el.dataset.row! : el.dataset.col!) : null;
     };
+    // El resaltado se pone y quita directamente en el DOM, sin pasar por el estado de React: así, al arrastrar,
+    // no se vuelve a dibujar la tabla entera en cada movimiento del ratón (era lo que la hacía ir a tirones).
+    const mark = (cls: string, el: Element | null, on: boolean) => { if (el) el.classList.toggle(cls, on); };
+    const elOf = (cid: string) => document.querySelector(kind === 'row' ? `tr[data-row="${cid}"]` : `th[data-col="${cid}"]`);
+    let over: string | null = null, last: PointerEvent | null = null, frame = 0;
+    const step = () => {
+      frame = 0;
+      if (!last) return;
+      const now = find(last);
+      if (now === over) return;
+      mark('drop', over ? elOf(over) : null, false);
+      over = now;
+      mark('drop', over && over !== id ? elOf(over) : null, true);
+    };
     const mv = (ev: PointerEvent) => {
       if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
-      moved = true;
-      setDrag({ kind, id, over: find(ev) });
+      if (!moved) { moved = true; if (kind === 'row') mark('dragging', elOf(id), true); }
+      last = ev;
+      if (!frame) frame = requestAnimationFrame(step);
     };
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', mv);
       window.removeEventListener('pointerup', up);
-      setDrag(null);
+      if (frame) cancelAnimationFrame(frame);
+      mark('drop', over ? elOf(over) : null, false);
+      mark('dragging', elOf(id), false);
       if (!moved) { onClick?.({ ...e, currentTarget: target } as RPointerEvent); return; }
-      const over = find(ev);
-      if (!over || over === id) return;
+      const target2 = find(ev);
+      if (!target2 || target2 === id) return;
       if (kind === 'row') {
         if (pm.sorts.length) return;
         const list = pm.rows.map((r) => r.id);
-        const before = list.indexOf(id) < list.indexOf(over) ? list[list.indexOf(over) + 1] ?? null : over;
+        const before = list.indexOf(id) < list.indexOf(target2) ? list[list.indexOf(target2) + 1] ?? null : over;
         op({ op: 'moveRow', id, before });
       } else {
         const list = pm.cols.map((c) => c.id);
-        const before = list.indexOf(id) < list.indexOf(over) ? list[list.indexOf(over) + 1] ?? null : over;
+        const before = list.indexOf(id) < list.indexOf(target2) ? list[list.indexOf(target2) + 1] ?? null : over;
         op({ op: 'moveCol', id, before });
       }
     };
@@ -144,16 +181,136 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
   const groupOf = (r: Row) => (groupCol ? cellText(pm, groupCol, r, tags) || 'Sin valor' : '');
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   const pageRows = rows.slice(Math.min(pageN, pages - 1) * PAGE, Math.min(pageN, pages - 1) * PAGE + PAGE);
-  const rowEl = (r: Row, ri: number) => (
-                <tr key={r.id} data-row={r.id} style={ruleStyle(r)} className={(ruleFor(pm, r, tags, today) ? 'ruled ' : '') + (ruleFor(pm, r, tags, today)?.bold ? 'rule-bold ' : '') + (drag?.kind === 'row' && drag.over === r.id ? 'drop' : drag?.kind === 'row' && drag.id === r.id ? 'dragging' : '') + (r.archived ? ' archived' : '') + (page === r.id ? ' paged' : '')}>
+  // ---- Cuadrícula tipo Excel (mejora 1.1.0, fase 3b) ----
+  const gridRows = pageRows.filter((r) => !groupCol || !folded.has(groupOf(r)));
+  api.current = { rows: gridRows, cols };
+  const dims: Dims = { minRow: 0, rows: gridRows.length, cols: cols.length };
+  const POPUP = new Set<ColType>(['select', 'multi', 'status', 'date', 'relation', 'image']);
+  const tdAt = (r: number, c: number) => document.querySelector(`.pm-grid td[data-r="${r}"][data-c="${c}"]`) as HTMLElement | null;
+  const matrix = (s: Sel) => { const rc = rectOf(s); const m: string[][] = []; for (let r = rc.r0; r <= rc.r1; r++) { const line: string[] = []; for (let c = rc.c0; c <= rc.c1; c++) line.push(gridRows[r] && cols[c] ? copyValue(pm, cols[c], gridRows[r], tags) : ''); m.push(line); } return m; };
+  const setCell = (row: string, col: string, value: CellVal) => op({ op: 'cell', row, col, value });
+  const select = (a: Pos, b: Pos = a) => setSel({ a, b });
+  const openCell = (pos: Pos) => { const c = cols[pos.c], r = gridRows[pos.r], td = tdAt(pos.r, pos.c); if (c && r && td) setPop({ kind: 'cell', col: c.id, row: r.id, ...at({ currentTarget: td }) }); };
+  /** Editar la celda: texto y números en la propia celda; selección, fecha, relación… abren su menú; la casilla se marca. */
+  const startEdit = (pos: Pos, seed?: string) => {
+    const c = cols[pos.c], r = gridRows[pos.r];
+    if (!c || !r) return;
+    select(pos); setHint(-1);
+    if (c.type === 'text' || c.type === 'number') {
+      orig.current = r.cells[c.id] ?? null;
+      if (seed !== undefined) {
+        if (c.type === 'text') setCell(r.id, c.id, seed);
+        else if (/^\d$/.test(seed)) setCell(r.id, c.id, Number(seed));
+        else return; // un número no admite esa letra
+      }
+      setEditing(pos);
+    } else if (POPUP.has(c.type)) { if (seed === undefined) openCell(pos); }
+    else if (c.type === 'checkbox' && (seed === undefined || seed === ' ')) setCell(r.id, c.id, !r.cells[c.id]);
+  };
+  const stopEdit = (cancel = false) => {
+    if (cancel && editing) { const c = cols[editing.c], r = gridRows[editing.r]; if (c && r) setCell(r.id, c.id, orig.current); }
+    setEditing(null); setHint(-1);
+  };
+  const EMPTY: Partial<Record<ColType, CellVal>> = { text: '', number: null, select: null, multi: [], status: null, checkbox: false, date: null };
+  const clearSel = (s: Sel) => {
+    const rc = rectOf(s);
+    const ops: PmOp[] = [];
+    for (let r = rc.r0; r <= rc.r1; r++) for (let c = rc.c0; c <= rc.c1; c++) { const col = cols[c], row = gridRows[r]; if (col && row && PASTABLE.has(col.type)) ops.push({ op: 'cell', row: row.id, col: col.id, value: EMPTY[col.type] ?? null }); }
+    if (ops.length) op({ op: 'batch', ops });
+  };
+  const pasteText = (s: Sel, text: string) => {
+    const plan = pastePlan(s, parseTsv(text));
+    const ops: PmOp[] = [];
+    let added = 0;
+    plan.data.forEach((line, i) => {
+      const ri = plan.at.r + i;
+      const row = gridRows[ri];
+      const fresh: Record<string, CellVal> = {};
+      line.forEach((raw, j) => {
+        const col = cols[plan.at.c + j];
+        if (!col) return;
+        const pv = pasteValue(col, raw, tags);
+        if (!pv) return;
+        if (row) ops.push({ op: 'cell', row: row.id, col: col.id, value: pv.value });
+        else if (raw.trim() !== '') fresh[col.id] = pv.value;
+      });
+      // Más filas copiadas que filas en la tabla: se añaden al final, como en Excel.
+      if (!row && Object.keys(fresh).length) { ops.push({ op: 'addRow', id: pmId('row'), cells: fresh }); added++; }
+    });
+    if (!ops.length) return;
+    op({ op: 'batch', ops });
+    select({ r: plan.at.r, c: plan.at.c }, { r: Math.min(plan.at.r + plan.data.length - 1, gridRows.length - 1 + added), c: Math.min(plan.at.c + Math.max(...plan.data.map((l) => l.length)) - 1, cols.length - 1) });
+  };
+  /** Enter (abajo) o Tab (derecha): confirma y pasa a la celda vecina; al pasar de la última fila crea otra. */
+  const moveFrom = (p: Pos, dr: number, dc: number, grow: boolean) => {
+    if (grow && dr > 0 && p.r === gridRows.length - 1 && gridRows[p.r] && cols[p.c]) { addRow(gridRows[p.r].id, cols[p.c].id); return; }
+    select({ r: Math.max(0, Math.min(gridRows.length - 1, p.r + dr)), c: Math.max(0, Math.min(cols.length - 1, p.c + dc)) });
+  };
+  const onProxyKey = (e: React.KeyboardEvent) => {
+    if (!sel) return;
+    const mod = e.ctrlKey || e.metaKey, k = e.key;
+    if (mod && !e.altKey && k.toLowerCase() === 'a') { e.preventDefault(); setSel(allOf(dims)); return; }
+    if (mod && !e.altKey && k.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if (mod && !e.altKey && k.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+    if (mod && !e.altKey && 'cxv'.includes(k.toLowerCase())) return; // lo hace el portapapeles
+    if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight') {
+      e.preventDefault();
+      const to = step(e.shiftKey ? sel.b : sel.a, k, dims, mod);
+      setSel(e.shiftKey ? { a: sel.a, b: to } : { a: to, b: to });
+      return;
+    }
+    if (k === 'Tab') { e.preventDefault(); moveFrom(sel.a, 0, e.shiftKey ? -1 : 1, false); return; }
+    if (k === 'Enter') { e.preventDefault(); moveFrom(sel.a, e.shiftKey ? -1 : 1, 0, true); return; }
+    if (k === 'F2') { e.preventDefault(); startEdit(sel.a); return; }
+    if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); clearSel(sel); return; }
+    if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); setSel(null); return; }
+    if (k.length === 1 && ((!e.ctrlKey && !e.metaKey) || (e.ctrlKey && e.altKey))) { e.preventDefault(); startEdit(sel.a, k); }
+  };
+  // Autocompletado de las columnas de texto: palabras de esa misma columna.
+  const editCol = editing ? cols[editing.c] : undefined;
+  const editRow = editing ? gridRows[editing.r] : undefined;
+  const typed = editCol && editRow && editCol.type === 'text' && typeof editRow.cells[editCol.id] === 'string' ? (editRow.cells[editCol.id] as string) : '';
+  const sugg = editCol?.type === 'text' && editRow ? suggest(typed, pm.rows.filter((x) => x.id !== editRow.id).map((x) => (typeof x.cells[editCol.id] === 'string' ? (x.cells[editCol.id] as string) : ''))) : [];
+  const editKey = (e: React.KeyboardEvent, pos: Pos) => {
+    e.stopPropagation();
+    const k = e.key;
+    const chosen = hint >= 0 ? sugg[hint] : undefined;
+    const done = () => { if (chosen !== undefined && editCol && editRow) setCell(editRow.id, editCol.id, chosen); setEditing(null); setHint(-1); };
+    if (k === 'Escape') { e.preventDefault(); stopEdit(true); return; }
+    if (k === 'Enter') { e.preventDefault(); done(); moveFrom(pos, e.shiftKey ? -1 : 1, 0, true); return; }
+    if (k === 'Tab') { e.preventDefault(); done(); moveFrom(pos, 0, e.shiftKey ? -1 : 1, false); return; }
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      e.preventDefault();
+      if (sugg.length && (k === 'ArrowDown' || hint >= 0)) { setHint(Math.max(-1, Math.min(sugg.length - 1, hint + (k === 'ArrowDown' ? 1 : -1)))); return; }
+      stopEdit(); moveFrom(pos, k === 'ArrowDown' ? 1 : -1, 0, false);
+    }
+  };
+  const cellDown = (e: React.MouseEvent, pos: Pos) => {
+    if (e.button !== 0) return;
+    const t = e.target as Element;
+    if (t.closest('button:not(.pm-btn), select, .pm-check')) return;
+    if (editing && editing.r === pos.r && editing.c === pos.c && t.closest('input')) return; // el cursor dentro de la celda que se edita
+    if (editing) stopEdit();
+    e.preventDefault();
+    down.current = true;
+    if (e.shiftKey && sel) setSel({ a: sel.a, b: pos }); else select(pos);
+    proxy.current?.focus({ preventScroll: true });
+  };
+  const selRect = sel ? rectOf(sel) : null;
+
+  const rowEl = (r: Row, ri: number, gi: number) => (
+                <tr key={r.id} data-row={r.id} style={ruleStyle(r)} className={(ruleFor(pm, r, tags, today) ? 'ruled ' : '') + (ruleFor(pm, r, tags, today)?.bold ? 'rule-bold ' : '') + (r.archived ? ' archived' : '') + (page === r.id ? ' paged' : '')}>
                   <td className="pm-grip" title="Arrastra para mover · clic para opciones" onPointerDown={(e) => startDrag(e, 'row', r.id, (ev) => setPop({ kind: 'row', row: r.id, ...at(ev) }))}>
                     <span className="small muted">{ri + 1}</span><span className="grip-dots">⠿</span>
                   </td>
                   {cols.map((c, k) => (
-                    <td key={c.id} className={k === 0 ? 'sticky' : ''} style={{ left: k === 0 ? GRIP : undefined }}>
+                    <td key={c.id} data-r={gi} data-c={k} role="gridcell" aria-selected={!!(selRect && inRect(selRect, gi, k))}
+                      className={(k === 0 ? 'sticky' : '') + (selRect && inRect(selRect, gi, k) ? ' sel' : '') + (sel && sel.a.r === gi && sel.a.c === k ? ' cur' : '')} style={{ left: k === 0 ? GRIP : undefined }}
+                      onMouseDown={(e) => cellDown(e, { r: gi, c: k })} onMouseEnter={() => { if (down.current && sel) setSel({ a: sel.a, b: { r: gi, c: k } }); }}
+                      onDoubleClick={(e) => { if (!(e.target as Element).closest('button:not(.pm-btn), select, .pm-check')) startEdit({ r: gi, c: k }); }}>
                       {k === 0 && (() => { const bl = blockers(pm, r).length > 0; return <button className={'open-page' + (bl ? ' blocked' : '')} title={bl ? 'Bloqueada: espera a otra fila · abrir página' : 'Abrir la página de la fila'} aria-label="Abrir página" onClick={() => setPage(r.id)}>{bl ? '⛔' : '↗'}</button>; })()}
-                      <Cell pm={pm} col={c} row={r} tags={tags} id={cellId(r.id, c.id)} set={(v) => op({ op: 'cell', row: r.id, col: c.id, value: v })} onKey={(e) => nav(e, r.id, c.id)} timer={(a) => op({ op: 'timer', row: r.id, col: c.id, action: a, now: Date.now() })}
-                        open={(e) => setPop({ kind: 'cell', col: c.id, row: r.id, ...at(e) })} />
+                      <Cell pm={pm} col={c} row={r} tags={tags} id={cellId(r.id, c.id)} set={(v) => op({ op: 'cell', row: r.id, col: c.id, value: v })} grid editing={editing?.r === gi && editing.c === k} onKey={(e) => editKey(e, { r: gi, c: k })} timer={(a) => op({ op: 'timer', row: r.id, col: c.id, action: a, now: Date.now() })}
+                        open={() => undefined} />
                     </td>
                   ))}
                 </tr>
@@ -211,7 +368,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
                 {cols.map((c, k) => {
                   const sort = pm.sorts.find((s) => s.col === c.id);
                   return (
-                    <th key={c.id} data-col={c.id} className={(k === 0 ? 'sticky ' : '') + (drag?.kind === 'col' && drag.over === c.id ? 'drop' : '')} style={{ width: c.w, minWidth: c.w, left: k === 0 ? GRIP : undefined }}
+                    <th key={c.id} data-col={c.id} className={(k === 0 ? 'sticky ' : '')} style={{ width: c.w, minWidth: c.w, left: k === 0 ? GRIP : undefined }}
                       onPointerDown={(e) => startDrag(e, 'col', c.id, (ev) => setPop({ kind: 'col', col: c.id, ...at(ev) }))}>
                       <span className="th-in" data-pop><span className="th-icon">{TYPE_ICON[c.type]}</span><span className="grow ellipsis">{c.name || 'Sin nombre'}</span>{sort && <span className="small">{sort.dir === 'asc' ? '↑' : '↓'}</span>}<span className="small muted">▾</span></span>
                       <span className="col-resize" onPointerDown={(e) => startResize(e, c)} aria-hidden="true" />
@@ -235,7 +392,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
                     }
                     if (folded.has(g)) return;
                   }
-                  out.push(rowEl(r, start + k));
+                  out.push(rowEl(r, start + k, gridRows.indexOf(r)));
                 });
                 return out;
               })()}
@@ -257,6 +414,13 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
               </tr>
             </tfoot>
           </table>
+          <textarea ref={proxy} className="grid-proxy" tabIndex={-1} aria-label="Celdas seleccionadas (para copiar, cortar o pegar)" onKeyDown={onProxyKey}
+            onChange={(e) => { e.currentTarget.value = ''; }}
+            onCopy={(e) => { if (!sel) return; e.preventDefault(); e.clipboardData?.setData('text/plain', toTsv(matrix(sel))); }}
+            onCut={(e) => { if (!sel) return; e.preventDefault(); e.clipboardData?.setData('text/plain', toTsv(matrix(sel))); clearSel(sel); }}
+            onPaste={(e) => { if (!sel) return; const text = e.clipboardData?.getData('text/plain') ?? ''; if (!text) return; e.preventDefault(); pasteText(sel, text); }} />
+          {editing && editCol && editRow && <SuggestList anchor={document.getElementById(cellId(editRow.id, editCol.id))} items={sugg} hint={hint} watch={typed}
+            onPick={(v) => { setCell(editRow.id, editCol.id, v); setHint(-1); document.getElementById(cellId(editRow.id, editCol.id))?.focus(); }} />}
           {pages > 1 && <div className="row pm-pages"><button className="tool small-btn" disabled={pageN === 0} onClick={() => setPageN(pageN - 1)}>‹ Anterior</button><span className="small muted">Filas {pageN * PAGE + 1}–{Math.min(rows.length, pageN * PAGE + PAGE)} de {rows.length}</span><button className="tool small-btn" disabled={pageN >= pages - 1} onClick={() => setPageN(pageN + 1)}>Siguiente ›</button></div>}
         </div>
         )}
@@ -276,13 +440,23 @@ function Pills({ list }: { list: { name: string; color: string }[] }) {
   return <>{list.map((o, i) => { const [bg, fg] = COLORS[o.color] ?? COLORS.gray; return <span key={i} className="pill" style={{ background: bg, color: fg }}>{o.name}</span>; })}</>;
 }
 
-function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefined }: { pm: Pm; col: Col; row: Row; tags: Opt[]; id: string; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; open: (e: React.MouseEvent) => void; timer?: (a: 'start' | 'stop' | 'reset') => void }) {
+const caretEnd = (e: React.FocusEvent<HTMLInputElement>) => { const n = e.currentTarget.value.length; e.currentTarget.setSelectionRange(n, n); };
+
+/**
+ * Una celda. En la cuadrícula (`grid`) se ve como texto y solo se convierte en cuadro de texto al editarla;
+ * los menús (selección, fecha, relación…) se abren con doble clic o F2. Fuera de la cuadrícula (página de fila) se edita directamente.
+ */
+function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefined, grid = false, editing = false }: { pm: Pm; col: Col; row: Row; tags: Opt[]; id: string; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; open: (e: React.MouseEvent) => void; timer?: (a: 'start' | 'stop' | 'reset') => void; grid?: boolean; editing?: boolean }) {
   const v = row.cells[col.id];
+  // Botones de menú: en la cuadrícula solo se seleccionan (el menú se abre con doble clic).
+  const btn = grid ? { tabIndex: -1 } : { 'data-pop': true, onClick: open, onKeyDown: onKey };
   switch (col.type) {
     case 'text':
-      return <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''} onChange={(e) => set(e.target.value)} onKeyDown={onKey} aria-label={col.name} />;
+      if (grid && !editing) return <div id={id} className="pm-in pm-view" aria-label={col.name}>{typeof v === 'string' ? v : ''}</div>;
+      return <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''} onChange={(e) => set(e.target.value)} onKeyDown={onKey} aria-label={col.name} autoFocus={grid} onFocus={grid ? caretEnd : undefined} />;
     case 'number':
-      return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} />;
+      if (grid && !editing) return <div id={id} className="pm-in num pm-view" aria-label={col.name} title={typeof v === 'number' ? formatNum(col, v) : ''}>{typeof v === 'number' ? formatNum(col, v) : ''}</div>;
+      return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} auto={grid} />;
     case 'formula': {
       const r = formulaValue(pm, col, row, tags);
       return r.error ? <span className="pm-formula err" title={r.error}>⚠ Error</span> : <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')}>{formatFVal(col, r.value)}</span>;
@@ -290,9 +464,9 @@ function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefine
     case 'rollup':
       return <span className="pm-formula num">{cellText(pm, col, row, tags)}</span>;
     case 'relation':
-      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}><RelPills v={v} /></button>;
+      return <button id={id} className="pm-btn" {...btn} aria-label={col.name}><RelPills v={v} /></button>;
     case 'image':
-      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}><ImageThumbs v={v} /></button>;
+      return <button id={id} className="pm-btn" {...btn} aria-label={col.name}><ImageThumbs v={v} /></button>;
     case 'timer':
       return <TimerCell id={id} col={col} v={v} onAction={(a) => timer(a)} />;
     case 'checkbox':
@@ -303,25 +477,26 @@ function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefine
     }
     case 'date': {
       const d = v && typeof v === 'object' && !Array.isArray(v) ? (v as DateVal) : null;
-      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}>{d?.start ? formatDate(d) : <span className="muted">—</span>}</button>;
+      return <button id={id} className="pm-btn" {...btn} aria-label={col.name}>{d?.start ? formatDate(d) : <span className="muted">—</span>}</button>;
     }
     default: {
       let list: { name: string; color: string }[] = [];
       if (col.type === 'status') { const si = stateInfo(col, v); if (si) list = [{ name: si.st.name, color: si.ph.color }]; }
       else { const opts = optsOf(col, tags); const ids = col.type === 'multi' ? (Array.isArray(v) ? v : []) : typeof v === 'string' ? [v] : []; list = ids.map((x) => opts.find((o) => o.id === x)).filter((o): o is Opt => !!o); }
-      return <button id={id} data-pop className="pm-btn" onClick={open} onKeyDown={onKey} aria-label={col.name}>{list.length ? <Pills list={list} /> : <span className="muted">—</span>}</button>;
+      return <button id={id} className="pm-btn" {...btn} aria-label={col.name}>{list.length ? <Pills list={list} /> : <span className="muted">—</span>}</button>;
     }
   }
 }
 
-function NumberCell({ id, col, v, set, onKey }: { id: string; col: Col; v: number | null; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void }) {
+function NumberCell({ id, col, v, set, onKey, auto = false }: { id: string; col: Col; v: number | null; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto?: boolean }) {
   const [text, setText] = useState<string | null>(null);
   return (
     <input id={id} className="pm-in num" inputMode="decimal" aria-label={col.name}
       value={text ?? (v === null ? '' : formatNum(col, v))}
       placeholder={col.fmt === 'eur' ? '€' : col.fmt === 'h' ? 'h' : ''}
       title={v === null ? '' : formatNum(col, v)}
-      onFocus={() => setText(v === null ? '' : String(v).replace('.', ','))}
+      autoFocus={auto}
+      onFocus={(e) => { setText(v === null ? '' : String(v).replace('.', ',')); if (auto) { const el = e.currentTarget; window.setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0); } }}
       onChange={(e) => { setText(e.target.value); const n = parseFloat(e.target.value.replace(/\s/g, '').replace(',', '.')); set(e.target.value.trim() === '' || isNaN(n) ? null : n); }}
       onBlur={() => setText(null)}
       onKeyDown={onKey} />
