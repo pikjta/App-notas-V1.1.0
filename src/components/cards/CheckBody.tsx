@@ -1,3 +1,5 @@
+import { FormatBar } from '../FormatBar';
+import { fmtStyle } from '../../lib/format';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useApp } from '../../App';
 import type { CheckCard, CheckItem } from '../../lib/model';
@@ -26,6 +28,7 @@ export function CheckBody({ card }: { card: CheckCard }) {
   const root = useRef<HTMLDivElement>(null);
   const proxy = useRef<HTMLTextAreaElement>(null);
   const lastFocus = useRef<string | null>(null);
+  const [cur, setCur] = useState<string | null>(null);
   const anchor = useRef<string | null>(null); // fila donde se pulsó el ratón
   const down = useRef(false);                 // ratón pulsado dentro de la lista
   const [ranging, setRanging] = useState(false);
@@ -57,7 +60,7 @@ export function CheckBody({ card }: { card: CheckCard }) {
   }, [sel, card.items]);
   // Si el ratón se suelta fuera de la lista, termina el arrastre igualmente.
   useEffect(() => {
-    const up = () => { down.current = false; setRanging(false); if (selRef.current) window.setTimeout(() => { const p = proxy.current; if (p && selRef.current) { p.focus({ preventScroll: true }); p.select(); } }, 0); };
+    const up = (ev: MouseEvent) => { down.current = false; setRanging(false); if ((ev.target as Element | null)?.closest?.('.modal-back')) return; if (selRef.current) window.setTimeout(() => { const p = proxy.current; if (p && selRef.current) { p.focus({ preventScroll: true }); p.select(); } }, 0); };
     window.addEventListener('mouseup', up);
     return () => window.removeEventListener('mouseup', up);
   }, []);
@@ -125,7 +128,10 @@ export function CheckBody({ card }: { card: CheckCard }) {
     setSel({ a: anchor.current, b: id });
   };
 
+  // Los eventos del selector de color (que cuelga de la tarjeta por React, aunque está fuera en la página) no son de la lista.
+  const outside = (e: React.SyntheticEvent) => !(e.currentTarget as Element).contains(e.target as Node);
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
+    if (outside(e)) return;
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); e.stopPropagation(); selectAll(); return; }
     if (!sel) return;
@@ -150,7 +156,7 @@ export function CheckBody({ card }: { card: CheckCard }) {
     <div className={'check' + (selected.size ? ' has-sel' : '') + (ranging ? ' ranging' : '')} ref={root} tabIndex={-1} data-testid="check"
       onKeyDownCapture={onKeyDownCapture}
       onMouseDown={(e) => {
-        if (e.target === proxy.current) return;
+        if (e.target === proxy.current || outside(e) || (e.target as Element).closest('.fmt-bar')) return;
         // Pulsar en otra parte termina la selección de tareas; con Mayús se amplía desde la última tarea usada.
         if (e.shiftKey && lastFocus.current) {
           const id = rowId(e.target);
@@ -161,13 +167,22 @@ export function CheckBody({ card }: { card: CheckCard }) {
         down.current = !t.closest('button, input[type="checkbox"]');
         if (sel) setSel(null);
       }}
-      onMouseUp={() => {
+      onMouseUp={(e) => {
+        if (outside(e)) return;
         down.current = false; setRanging(false);
         // Al soltar el ratón con tareas seleccionadas, el foco vuelve al cuadro oculto para que Ctrl+C copie.
         if (sel) window.setTimeout(() => { const p = proxy.current; if (p) { p.focus({ preventScroll: true }); p.select(); } }, 0);
       }}
-      onCopy={(e) => { if (sel && block.length) { e.preventDefault(); e.clipboardData?.setData('text/plain', checklistToMarkdown(block)); } }}
-      onCut={(e) => { if (sel && block.length) { e.preventDefault(); e.clipboardData?.setData('text/plain', checklistToMarkdown(block)); window.setTimeout(removeBlock, 0); } }}>
+      onCopy={(e) => { if (!outside(e) && sel && block.length) { e.preventDefault(); e.clipboardData?.setData('text/plain', checklistToMarkdown(block)); } }}
+      onCut={(e) => { if (!outside(e) && sel && block.length) { e.preventDefault(); e.clipboardData?.setData('text/plain', checklistToMarkdown(block)); window.setTimeout(removeBlock, 0); } }}>
+      {(() => {
+        // El formato va a las tareas seleccionadas o, si no hay, a la última donde se escribió.
+        const ids = sel ? block.map((x) => x.id) : cur && items.some((x) => x.id === cur) ? [cur] : [];
+        const fmts = ids.map((id) => items.find((x) => x.id === id)?.fmt);
+        return <FormatBar fmts={fmts} disabled={!ids.length} label="Formato de las tareas"
+          onPatch={(patch) => dispatch({ t: 'checkFormat', card: card.id, ids, patch })}
+          onAfter={() => { if (sel) { proxy.current?.focus({ preventScroll: true }); proxy.current?.select(); } else if (cur) document.getElementById('it-' + cur)?.focus(); }} />;
+      })()}
       {total > 0 && (
         <div className="progress-row">
           <div className="progress" aria-label={`${done} de ${total} hechas`}><span style={{ width: `${Math.round((done / total) * 100)}%` }} /></div>
@@ -199,9 +214,10 @@ export function CheckBody({ card }: { card: CheckCard }) {
               id={'it-' + it.id}
               rows={1}
               className={'check-text' + (checked ? ' done' : '')}
+              style={fmtStyle(it.fmt)}
               value={it.text}
               placeholder="Escribe una tarea…"
-              onFocus={() => { lastFocus.current = it.id; }}
+              onFocus={() => { lastFocus.current = it.id; setCur(it.id); }}
               onChange={(e) => dispatch({ t: 'checkItem', card: card.id, item: it.id, patch: { text: e.target.value.replace(/\n/g, ' ') } })}
               onPaste={(e) => {
                 const text = e.clipboardData.getData('text/plain');

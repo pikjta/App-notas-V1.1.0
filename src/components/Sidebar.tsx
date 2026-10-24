@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useApp } from '../App';
 import { formatTimer, rowTitle, runningTimer } from '../lib/pm';
 import { PROJECT_COLORS, uid } from '../lib/model';
@@ -8,7 +8,7 @@ import { todayKey } from '../lib/store';
 import { DEFAULT_SESSION_FONT, fontCss, normalizeFont, normalizeSide, sideVars } from '../lib/appearance';
 import { FontPanel, SidePanel } from './Appearance';
 import { Icon } from './Icon';
-import { viewIconOf } from '../lib/icons';
+import { hasIcon, ICON_KEYS, iconLabel, viewIconOf } from '../lib/icons';
 import type { ViewIconId } from '../lib/icons';
 
 export function Sidebar() {
@@ -19,6 +19,8 @@ export function Sidebar() {
   const [folderName, setFolderName] = useState('');
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [moveMenu, setMoveMenu] = useState<string | null>(null);
+  const [iconMenu, setIconMenu] = useState<string | null>(null);
+  const refocus = useRef<string | null>(null);
   const [renamingSession, setRenamingSession] = useState(false);
   const [fontOpen, setFontOpen] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
@@ -40,6 +42,92 @@ export function Sidebar() {
     setFolderName('');
   };
   const live = state.projects.filter((p) => !p.trashed && !p.hidden && !p.home);
+  // Tras mover una tarea con el teclado, el foco vuelve a su botón (el nodo cambia de sitio).
+  useLayoutEffect(() => {
+    if (!refocus.current) return;
+    (document.querySelector(`.proj-row[data-proj="${refocus.current}"] .side-item`) as HTMLElement | null)?.focus();
+    refocus.current = null;
+  });
+  const folderOf = (p: Project) => (p.folder && state.folders.some((f) => f.id === p.folder) ? p.folder : null);
+
+  /** Alt+↑ / Alt+↓: sube o baja la tarea dentro de su carpeta. */
+  const nudge = (e: React.KeyboardEvent, p: Project) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const sibs = live.filter((x) => folderOf(x) === folderOf(p));
+    const i = sibs.findIndex((x) => x.id === p.id);
+    const before = e.key === 'ArrowUp' ? sibs[i - 1]?.id : i + 1 < sibs.length ? (sibs[i + 2]?.id ?? null) : undefined;
+    if (before === undefined) return;
+    refocus.current = p.id;
+    dispatch({ t: 'moveProject', id: p.id, folder: folderOf(p), before });
+  };
+
+  /** Arrastrar una tarea: antes o después de otra (incluso de otra carpeta), a una carpeta, o fuera de ellas. */
+  const startDrag = (e: React.PointerEvent, p: Project) => {
+    if (e.button !== 0 || (e.target as Element).closest('.row-actions, input')) return;
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false, ghost: HTMLElement | null = null, mark: Element | null = null, markCls = '';
+    let to: { folder: string | null; before: string | null } | null = null;
+    const unmark = () => { if (mark) mark.classList.remove(markCls); mark = null; };
+    const nextRow = (row: HTMLElement) => { let n = row.nextElementSibling as HTMLElement | null; while (n && (!n.matches('.proj-row[data-proj]') || n.dataset.proj === p.id)) n = n.nextElementSibling as HTMLElement | null; return n; };
+    const find = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const row = el?.closest('.proj-row[data-proj]') as HTMLElement | null;
+      if (row && row.dataset.proj !== p.id) {
+        const rc = row.getBoundingClientRect();
+        const folder = row.dataset.folder || null;
+        if (ev.clientY < rc.top + rc.height / 2) return { folder, before: row.dataset.proj!, el: row, cls: 'drop-before' };
+        return { folder, before: nextRow(row)?.dataset.proj ?? null, el: row, cls: 'drop-after' };
+      }
+      if (row) return null;
+      const fold = el?.closest('.side-folder[data-folder-id]') as HTMLElement | null;
+      if (fold) return { folder: fold.dataset.folderId!, before: null, el: fold, cls: 'drop-in' };
+      const list = el?.closest('.side-list') as HTMLElement | null;
+      return list ? { folder: null, before: null, el: list, cls: 'drop-in' } : null;
+    };
+    let frame = 0, last: PointerEvent | null = null;
+    const step = () => {
+      frame = 0;
+      if (!last) return;
+      const t = find(last);
+      unmark();
+      to = t ? { folder: t.folder, before: t.before } : null;
+      if (t) { mark = t.el; markCls = t.cls; t.el.classList.add(t.cls); }
+    };
+    const mv = (ev: PointerEvent) => {
+      if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
+      if (!moved) {
+        moved = true;
+        document.body.classList.add('pm-grabbing');
+        window.getSelection()?.removeAllRanges();
+        ghost = document.createElement('div'); ghost.className = 'pm-ghost'; ghost.textContent = p.name; document.body.appendChild(ghost);
+        (document.querySelector(`.proj-row[data-proj="${p.id}"]`))?.classList.add('dragging');
+      }
+      if (ghost) { ghost.style.left = ev.clientX + 12 + 'px'; ghost.style.top = ev.clientY + 8 + 'px'; }
+      last = ev;
+      if (!frame) frame = requestAnimationFrame(step);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', mv);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      if (frame) cancelAnimationFrame(frame);
+      if (moved) step();
+      unmark();
+      document.body.classList.remove('pm-grabbing');
+      ghost?.remove();
+      document.querySelector(`.proj-row[data-proj="${p.id}"]`)?.classList.remove('dragging');
+      if (!moved) return;
+      // El clic que sigue a soltar no debe abrir la tarea.
+      const stop = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
+      window.addEventListener('click', stop, { capture: true, once: true });
+      window.setTimeout(() => window.removeEventListener('click', stop, true), 0);
+      if (to) dispatch({ t: 'moveProject', id: p.id, folder: to.folder, before: to.before });
+    };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
 
   const newProject = () => (
     <input className="side-input" autoFocus value={name} placeholder="Nombre de la tarea principal" aria-label="Nombre de la tarea principal"
@@ -50,13 +138,25 @@ export function Sidebar() {
   const projectRow = (p: Project) => {
     const st = projectStats(state.cards, p.id);
     return (
-      <div key={p.id} className={'proj-row' + (p.id === state.sel && state.view === 'board' ? ' on' : '')}>
-        <button className={'side-item proj' + (p.id === state.sel && state.view === 'board' ? ' on' : '')} onClick={() => dispatch({ t: 'select', id: p.id })}>
-          <span className="dot" style={{ background: p.color }} />
+      <div key={p.id} data-proj={p.id} data-folder={folderOf(p) ?? ''} className={'proj-row' + (p.id === state.sel && state.view === 'board' ? ' on' : '')} onPointerDown={(e) => startDrag(e, p)}>
+        <button className={'side-item proj' + (p.id === state.sel && state.view === 'board' ? ' on' : '')} onClick={() => dispatch({ t: 'select', id: p.id })} onKeyDown={(e) => nudge(e, p)} title="Arrastra para mover · Alt+↑/↓ para subir o bajar">
+          {p.icon && hasIcon(p.icon) ? <span className="proj-icon" style={{ color: p.color }}><Icon name={p.icon} size={16} /></span> : <span className="dot" style={{ background: p.color }} />}
           <span className="side-name">{p.name}</span>
           {st.total > 0 && <span className="side-count" title={`${st.done} de ${st.total} hechas`}>{st.done}/{st.total}</span>}
         </button>
         <span className="row-actions">
+          <span className="menu-anchor">
+            <button className="icon-btn small" title="Icono de la tarea" aria-label="Icono de la tarea" aria-expanded={iconMenu === p.id} onClick={() => setIconMenu(iconMenu === p.id ? null : p.id)}><Icon name={p.icon && hasIcon(p.icon) ? p.icon : 'palette'} size={14} /></button>
+            {iconMenu === p.id && (
+              <div className="menu move-menu icon-menu" role="menu" aria-label="Icono de la tarea" onMouseLeave={() => setIconMenu(null)}>
+                <span className="menu-label">Icono</span>
+                <div className="icon-grid">
+                  {ICON_KEYS.map((k) => <button key={k} role="menuitem" className={'icon-cell' + (p.icon === k ? ' on' : '')} title={iconLabel(k)} aria-label={iconLabel(k)} onClick={() => { dispatch({ t: 'patchProject', id: p.id, patch: { icon: k } }); setIconMenu(null); }}><Icon name={k} size={18} /></button>)}
+                </div>
+                <button role="menuitem" className={!p.icon ? 'on' : ''} onClick={() => { dispatch({ t: 'patchProject', id: p.id, patch: { icon: null } }); setIconMenu(null); }}>Punto de color</button>
+              </div>
+            )}
+          </span>
           <span className="menu-anchor">
             <button className="icon-btn small" title="Mover a una carpeta" aria-label="Mover a una carpeta" aria-expanded={moveMenu === p.id} onClick={() => setMoveMenu(moveMenu === p.id ? null : p.id)}><Icon name="folder" size={14} /></button>
             {moveMenu === p.id && (
@@ -110,7 +210,7 @@ export function Sidebar() {
         {state.folders.map((f) => {
           const inside = live.filter((p) => p.folder === f.id);
           return (
-            <div key={f.id} className="side-folder">
+            <div key={f.id} className="side-folder" data-folder-id={f.id}>
               <div className="folder-head">
                 <button className="icon-btn small" aria-expanded={!f.collapsed} aria-label={f.collapsed ? 'Desplegar carpeta' : 'Plegar carpeta'} onClick={() => dispatch({ t: 'patchFolder', id: f.id, patch: { collapsed: !f.collapsed } })}>{f.collapsed ? '▸' : '▾'}</button>
                 {renamingFolder === f.id ? (

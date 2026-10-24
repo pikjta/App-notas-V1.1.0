@@ -34,9 +34,14 @@ describe('Mejoras 1.1.0', () => {
     await user.click(screen.getByText('+ Nueva fila'));
     await user.keyboard('Bocetos{Tab}');
     await user.keyboard('{Escape}{Escape}');
-    const row = document.querySelector('.pm-mini-row') as HTMLElement;
+    const row = document.querySelector('.pm-mini-row:not(.pm-mini-head)') as HTMLElement;
     expect(row.querySelectorAll('.pm-mini-cell').length).toBe(3);
     expect(row.textContent).toContain('Bocetos');
+    // La vista previa rotula las columnas.
+    const head = document.querySelector('.pm-mini-head') as HTMLElement;
+    expect(head.querySelectorAll('.pm-mini-cell').length).toBe(3);
+    expect(head.textContent).toContain('Tarea');
+    expect(head.textContent).toContain('Estado');
   }, 30_000);
 
   const newChecklist = async (user: ReturnType<typeof userEvent.setup>) => {

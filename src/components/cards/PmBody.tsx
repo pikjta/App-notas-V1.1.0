@@ -18,6 +18,9 @@ export function PmBody({ card }: { card: PmCard }) {
         </div>
       )}
       <div className="small muted">{pm.rows.length} {pm.rows.length === 1 ? 'tarea' : 'tareas'}</div>
+      <div className="pm-mini-row pm-mini-head" aria-hidden="true">
+        {shown.map((c, k) => <span key={c.id} className={'pm-mini-cell ellipsis' + (k === 0 ? ' first' : '')}>{c.name || 'Sin nombre'}</span>)}
+      </div>
       {pm.rows.slice(0, 6).map((r) => (
         <div key={r.id} className="pm-mini-row">
           {shown.map((c, k) => {

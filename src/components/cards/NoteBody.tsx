@@ -20,12 +20,15 @@ export function NoteBody({ card }: { card: NoteCard }) {
   const [dlg, setDlg] = useState<{ q: string; cards: boolean; at: number } | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const caret = useRef<[number, number] | null>(null);
+  const pendingAct = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!editing || !ta.current) return;
     ta.current.focus();
     const [a, b] = caret.current ?? [ta.current.value.length, ta.current.value.length];
     caret.current = null;
     ta.current.setSelectionRange(a, b);
+    // Si se pulsó un botón de formato sin estar editando, se aplica ahora que el cuadro de texto ya existe.
+    const f = pendingAct.current; pendingAct.current = null; f?.();
   }, [editing]);
   // Posición del cursor que hay que aplicar justo después de que React actualice el texto
   // (si se aplicara más tarde, al escribir rápido el cursor saltaría hacia atrás).
@@ -75,35 +78,44 @@ export function NoteBody({ card }: { card: NoteCard }) {
     }
   };
 
-  if (!editing) {
-    return (
-      <div className="note-view" onClick={() => setEditing(true)} title="Haz clic en el texto para editar">
-        {card.body.trim() ? <Markdown body={card.body} link={resolveLink} onToggle={(line) => set(toggleTask(card.body, line))} /> : <span className="muted">Nota vacía. Haz clic para escribir en Markdown.</span>}
-      </div>
-    );
-  }
-  return (
-    <div className="note-edit">
-      <div className="mini-bar" onMouseDown={(e) => e.preventDefault()}>
-        <button onClick={() => linePrefix('## ')} title="Título" aria-label="Título">H</button>
-        <button onClick={() => wrap('**')} title="Negrita (⌘B)"><b>B</b></button>
-        <button onClick={() => wrap('*')} title="Cursiva (⌘I)"><i>I</i></button>
-        <button onClick={() => wrap('~~')} title="Tachado"><s>S</s></button>
-        <button onClick={() => wrap('`')} title="Código" aria-label="Código">{'<>'}</button>
-        <button onClick={() => linePrefix('- ')} title="Lista" aria-label="Lista">•</button>
-        <button onClick={() => linePrefix('- [ ] ')} title="Casilla de tarea" aria-label="Casilla de tarea">☐</button>
-        <button onClick={() => linePrefix('> ')} title="Cita" aria-label="Cita">❝</button>
-        <button title="Enlace" aria-label="Enlace" onClick={() => {
+  /** Barra de formato (Markdown): siempre visible; sin editar, el botón abre la nota para escribir. */
+  const act = (fn: () => void) => { if (editing) { fn(); return; } pendingAct.current = fn; caret.current = [card.body.length, card.body.length]; setEditing(true); };
+  const noteBar = (
+    <div className="mini-bar" onMouseDown={(e) => e.preventDefault()}>
+        <button onClick={() => act(() => linePrefix('## '))} title="Título" aria-label="Título">H</button>
+        <button onClick={() => act(() => wrap('**'))} title="Negrita (⌘B)"><b>B</b></button>
+        <button onClick={() => act(() => wrap('*'))} title="Cursiva (⌘I)"><i>I</i></button>
+        <button onClick={() => act(() => wrap('~~'))} title="Tachado"><s>S</s></button>
+        <button onClick={() => act(() => wrap('`'))} title="Código" aria-label="Código">{'<>'}</button>
+        <button onClick={() => act(() => linePrefix('- '))} title="Lista" aria-label="Lista">•</button>
+        <button onClick={() => act(() => linePrefix('- [ ] '))} title="Casilla de tarea" aria-label="Casilla de tarea">☐</button>
+        <button onClick={() => act(() => linePrefix('> '))} title="Cita" aria-label="Cita">❝</button>
+        <button title="Enlace" aria-label="Enlace" onClick={() => act(() => {
           const el = ta.current;
           if (!el) return;
           const { selectionStart: a, selectionEnd: b, value } = el;
           const text = value.slice(a, b) || 'texto';
           el.focus();
           set(value.slice(0, a) + '[' + text + '](https://)' + value.slice(b), [a + text.length + 4, a + text.length + 12]);
-        }}>🔗</button>
-        <button title="Enlace a otra tarea principal [[ ]]" aria-label="Enlace a otra tarea principal" onClick={() => setDlg({ q: '', cards: true, at: ta.current?.selectionStart ?? card.body.length })}>[[ ]]</button>
-        <button className="grow-btn" title="Listo" aria-label="Listo" onClick={() => { setPick(null); setEditing(false); }}>Listo</button>
+        })}>🔗</button>
+        <button title="Enlace a otra tarea principal [[ ]]" aria-label="Enlace a otra tarea principal" onClick={() => act(() => setDlg({ q: '', cards: true, at: ta.current?.selectionStart ?? card.body.length }))}>[[ ]]</button>
+        {editing && <button className="grow-btn" title="Listo" aria-label="Listo" onClick={() => { setPick(null); setEditing(false); }}>Listo</button>}
       </div>
+  );
+
+  if (!editing) {
+    return (
+      <div className="note-edit">
+        {noteBar}
+      <div className="note-view" onClick={() => setEditing(true)} title="Haz clic en el texto para editar">
+        {card.body.trim() ? <Markdown body={card.body} link={resolveLink} onToggle={(line) => set(toggleTask(card.body, line))} /> : <span className="muted">Nota vacía. Haz clic para escribir en Markdown.</span>}
+      </div>
+      </div>
+    );
+  }
+  return (
+    <div className="note-edit">
+      {noteBar}
       <textarea
         ref={ta}
         value={card.body}

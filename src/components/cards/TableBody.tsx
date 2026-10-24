@@ -1,5 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SuggestList } from '../SuggestList';
+import { FormatBar } from '../FormatBar';
+import { fmtStyle } from '../../lib/format';
+import type { CellFmt } from '../../lib/format';
 import { useApp } from '../../App';
 import type { TableCard } from '../../lib/model';
 import { uid } from '../../lib/model';
@@ -26,6 +29,7 @@ export function TableBody({ card }: { card: TableCard }) {
 
   const dims = { minRow: -1, rows: card.rows.length, cols: card.heads.length };
   const valueAt = (r: number, c: number) => (r < 0 ? card.heads[c] : card.rows[r]?.cells[c]) ?? '';
+  const fmtAt = (r: number, c: number): CellFmt | undefined => (r < 0 ? card.headFmt?.[c] : card.rows[r]?.fmt?.[c]) ?? undefined;
   const matrix = (s: Sel) => { const rc = rectOf(s); const m: string[][] = []; for (let r = rc.r0; r <= rc.r1; r++) { const line: string[] = []; for (let c = rc.c0; c <= rc.c1; c++) line.push(valueAt(r, c)); m.push(line); } return m; };
 
   // Sin editar, el foco está en un cuadro oculto: así copiar, cortar, pegar y el teclado funcionan igual en todos los sistemas.
@@ -124,8 +128,8 @@ export function TableBody({ card }: { card: TableCard }) {
     onMouseDown: (e: React.MouseEvent) => cellDown(e, { r, c }), onMouseEnter: () => cellEnter({ r, c }), onDoubleClick: (e: React.MouseEvent) => { if (!(e.target as Element).closest('button')) startEdit({ r, c }); },
   });
   const editing = (r: number, c: number) => !!edit && edit.pos.r === r && edit.pos.c === c;
-  const editorEl = (label: string) => edit && (
-    <input ref={editor} className="tbl-edit" value={edit.text} aria-label={label} autoFocus spellCheck={false}
+  const editorEl = (label: string, f?: CellFmt) => edit && (
+    <input ref={editor} className="tbl-edit" style={fmtStyle(f)} value={edit.text} aria-label={label} autoFocus spellCheck={false}
       onFocus={(e) => { const n = e.currentTarget.value.length; e.currentTarget.setSelectionRange(n, n); }}
       onChange={(e) => { setEdit({ ...edit, text: e.target.value }); setHint(-1); }}
       onKeyDown={onEditKey} onBlur={() => commit()} />
@@ -133,14 +137,20 @@ export function TableBody({ card }: { card: TableCard }) {
 
   return (
     <div className="tbl-wrap" ref={wrap} role="grid" aria-label="Tabla" aria-multiselectable="true"
-      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { commit(); setSel(null); } }}>
+      onBlur={(e) => { const to = e.relatedTarget as Element | null; if (!e.currentTarget.contains(to) && !to?.closest?.('.modal-back, .tbl-suggest')) { commit(); setSel(null); } }}>
+      {(() => {
+        const cells: { r: number; c: number }[] = [];
+        if (rc) for (let r = Math.max(rc.r0, -1); r <= Math.min(rc.r1, card.rows.length - 1); r++) for (let c = rc.c0; c <= Math.min(rc.c1, card.heads.length - 1); c++) cells.push({ r, c });
+        return <FormatBar align fmts={cells.map((x) => fmtAt(x.r, x.c))} disabled={!cells.length} label="Formato de las celdas"
+          onPatch={(patch) => dispatch({ t: 'tableFormat', card: card.id, cells, patch })} onAfter={() => proxy.current?.focus({ preventScroll: true })} />;
+      })()}
       <table className="tbl">
         <thead>
           <tr>
             {card.heads.map((h, i) => (
               <th key={i} {...cellProps(-1, i)} aria-label={editing(-1, i) ? undefined : `Nombre de la columna ${i + 1}`}>
                 <div className="th">
-                  {editing(-1, i) ? editorEl(`Nombre de la columna ${i + 1}`) : <div className="tbl-text">{h}</div>}
+                  {editing(-1, i) ? editorEl(`Nombre de la columna ${i + 1}`, fmtAt(-1, i)) : <div className="tbl-text" style={fmtStyle(fmtAt(-1, i))}>{h}</div>}
                   {card.heads.length > 1 && <button className="x" aria-label="Eliminar columna" title="Eliminar columna" onClick={() => dispatch({ t: 'tableRemoveCol', card: card.id, col: i })}>×</button>}
                 </div>
               </th>
@@ -153,7 +163,7 @@ export function TableBody({ card }: { card: TableCard }) {
             <tr key={r.id}>
               {r.cells.map((v, ci) => (
                 <td key={ci} {...cellProps(ri, ci)} aria-label={editing(ri, ci) ? undefined : `Fila ${ri + 1}, ${card.heads[ci]}`}>
-                  {editing(ri, ci) ? editorEl(`Fila ${ri + 1}, ${card.heads[ci]}`) : <div className="tbl-text">{v}</div>}
+                  {editing(ri, ci) ? editorEl(`Fila ${ri + 1}, ${card.heads[ci]}`, fmtAt(ri, ci)) : <div className="tbl-text" style={fmtStyle(fmtAt(ri, ci))}>{v}</div>}
                 </td>
               ))}
               <td className="tbl-add">{card.rows.length > 1 && <button className="x" aria-label="Eliminar fila" title="Eliminar fila" onClick={() => dispatch({ t: 'tableRemoveRow', card: card.id, row: r.id })}>×</button>}</td>

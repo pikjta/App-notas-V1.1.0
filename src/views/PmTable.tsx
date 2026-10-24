@@ -19,6 +19,9 @@ import { allOf, inRect, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from
 import type { Dims, Pos, Sel } from '../lib/grid';
 import { copyValue, PASTABLE, pasteValue } from '../lib/pmgrid';
 import { SuggestList } from '../components/SuggestList';
+import { FormatBar } from '../components/FormatBar';
+import { fmtStyle } from '../lib/format';
+import type { CellFmt } from '../lib/format';
 
 type Pop =
   | { kind: 'col'; col: string; x: number; y: number }
@@ -124,6 +127,19 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
     };
     // El resaltado se pone y quita directamente en el DOM, sin pasar por el estado de React: así, al arrastrar,
     // no se vuelve a dibujar la tabla entera en cada movimiento del ratón (era lo que la hacía ir a tirones).
+    // Mientras se arrastra no se selecciona texto, y una etiqueta con el nombre acompaña al ratón.
+    const srcRow = kind === 'row' ? rows.find((r) => r.id === id) : undefined;
+    const label = kind === 'col' ? (pm.cols.find((c) => c.id === id)?.name || 'Columna') : (srcRow ? rowTitle(pm, srcRow, tags) || 'Fila' : 'Fila');
+    let ghost: HTMLElement | null = null;
+    const grab = () => {
+      document.body.classList.add('pm-grabbing');
+      window.getSelection()?.removeAllRanges();
+      ghost = document.createElement('div');
+      ghost.className = 'pm-ghost';
+      ghost.textContent = label;
+      document.body.appendChild(ghost);
+    };
+    const release = () => { document.body.classList.remove('pm-grabbing'); ghost?.remove(); ghost = null; };
     const mark = (cls: string, el: Element | null, on: boolean) => { if (el) el.classList.toggle(cls, on); };
     const elOf = (cid: string) => document.querySelector(kind === 'row' ? `tr[data-row="${cid}"]` : `th[data-col="${cid}"]`);
     let over: string | null = null, last: PointerEvent | null = null, frame = 0;
@@ -138,7 +154,8 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
     };
     const mv = (ev: PointerEvent) => {
       if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 5) return;
-      if (!moved) { moved = true; if (kind === 'row') mark('dragging', elOf(id), true); }
+      if (!moved) { moved = true; grab(); mark('dragging', elOf(id), true); }
+      if (ghost) { ghost.style.left = ev.clientX + 12 + 'px'; ghost.style.top = ev.clientY + 8 + 'px'; }
       last = ev;
       if (!frame) frame = requestAnimationFrame(step);
     };
@@ -146,6 +163,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
       window.removeEventListener('pointermove', mv);
       window.removeEventListener('pointerup', up);
       if (frame) cancelAnimationFrame(frame);
+      release();
       mark('drop', over ? elOf(over) : null, false);
       mark('dragging', elOf(id), false);
       if (!moved) { onClick?.({ ...e, currentTarget: target } as RPointerEvent); return; }
@@ -309,7 +327,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
                       onMouseDown={(e) => cellDown(e, { r: gi, c: k })} onMouseEnter={() => { if (down.current && sel) setSel({ a: sel.a, b: { r: gi, c: k } }); }}
                       onDoubleClick={(e) => { if (!(e.target as Element).closest('button:not(.pm-btn), select, .pm-check')) startEdit({ r: gi, c: k }); }}>
                       {k === 0 && (() => { const bl = blockers(pm, r).length > 0; return <button className={'open-page' + (bl ? ' blocked' : '')} title={bl ? 'Bloqueada: espera a otra fila · abrir página' : 'Abrir la página de la fila'} aria-label="Abrir página" onClick={() => setPage(r.id)}>{bl ? '⛔' : '↗'}</button>; })()}
-                      <Cell pm={pm} col={c} row={r} tags={tags} id={cellId(r.id, c.id)} set={(v) => op({ op: 'cell', row: r.id, col: c.id, value: v })} grid editing={editing?.r === gi && editing.c === k} onKey={(e) => editKey(e, { r: gi, c: k })} timer={(a) => op({ op: 'timer', row: r.id, col: c.id, action: a, now: Date.now() })}
+                      <Cell pm={pm} col={c} row={r} tags={tags} id={cellId(r.id, c.id)} set={(v) => op({ op: 'cell', row: r.id, col: c.id, value: v })} grid fmt={r.fmt?.[c.id]} editing={editing?.r === gi && editing.c === k} onKey={(e) => editKey(e, { r: gi, c: k })} timer={(a) => op({ op: 'timer', row: r.id, col: c.id, action: a, now: Date.now() })}
                         open={() => undefined} />
                     </td>
                   ))}
@@ -345,6 +363,14 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
           <button data-pop className={'tool' + (nFilters ? ' on' : '')} onClick={(e) => setPop({ kind: 'filter', ...at(e) })}>Filtros{nFilters ? ' · ' + nFilters : ''}</button>
           <button data-pop className={'tool' + (nSorts || pm.group ? ' on' : '')} onClick={(e) => setPop({ kind: 'sort', ...at(e) })}>Ordenar y agrupar{nSorts + (pm.group ? 1 : 0) ? ' · ' + (nSorts + (pm.group ? 1 : 0)) : ''}</button>
           <span className="grow small muted">{(() => { const base = pm.ui?.showArchived ? pm.rows.length : pm.rows.length - archivedCount; const n = (x: number) => x + (x === 1 ? ' fila' : ' filas'); return rows.length === base ? n(base) : `${rows.length} de ${n(base)}`; })()}</span>
+          {view === 'table' && (() => {
+            // El formato se aplica a las celdas elegidas que muestran texto (texto, número, fórmula y resumen).
+            const FMT_TYPES = new Set<ColType>(['text', 'number', 'formula', 'rollup']);
+            const cells: { row: string; col: string }[] = [];
+            if (selRect) for (let r = selRect.r0; r <= selRect.r1; r++) for (let c = selRect.c0; c <= selRect.c1; c++) { const row = gridRows[r], col = cols[c]; if (row && col && FMT_TYPES.has(col.type)) cells.push({ row: row.id, col: col.id }); }
+            const fmts = cells.map((x) => pm.rows.find((r) => r.id === x.row)?.fmt?.[x.col]);
+            return <FormatBar fmts={fmts} align disabled={!cells.length} label="Formato de las celdas" onPatch={(patch) => op({ op: 'format', cells, patch })} onAfter={() => proxy.current?.focus({ preventScroll: true })} />;
+          })()}
           <button className={'tool' + (pm.ui?.showArchived ? ' on' : '')} aria-pressed={!!pm.ui?.showArchived} onClick={() => op({ op: 'ui', patch: { showArchived: !pm.ui?.showArchived } })}>Archivadas · {archivedCount}</button>
           <button data-pop className="tool" onClick={(e) => setPop({ kind: 'addcol', ...at(e) })}>+ Nueva columna</button>
           <button className="primary" onClick={() => addRow(null)}>+ Nueva fila</button>
@@ -430,7 +456,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
               open={(e) => setPop({ kind: 'cell', col: c.id, row: pageRow.id, ...at(e) })} />} />
         )}
         </div>
-        {pop && <Popover pop={pop} pm={pm} card={card} close={() => setPop(null)} op={op} rows={rows} archived={archivedCount} openImport={(plan, name) => setPop({ kind: 'import', plan, name, x: 0, y: 0 })} openPage={(id) => { setPage(id); setPop(null); }} openPop={(k, id) => { const x = pop.kind === 'more' ? Math.max(8, (modal.current?.getBoundingClientRect().width ?? 800) - 460) : (pop as { x: number }).x; const y = (pop as { y: number }).y; setPop(k === 'col' ? { kind: 'col', col: id!, x, y } : { kind: k, x, y }); }} />}
+        {pop && <Popover closeTable={onClose} pop={pop} pm={pm} card={card} close={() => setPop(null)} op={op} rows={rows} archived={archivedCount} openImport={(plan, name) => setPop({ kind: 'import', plan, name, x: 0, y: 0 })} openPage={(id) => { setPage(id); setPop(null); }} openPop={(k, id) => { const x = pop.kind === 'more' ? Math.max(8, (modal.current?.getBoundingClientRect().width ?? 800) - 460) : (pop as { x: number }).x; const y = (pop as { y: number }).y; setPop(k === 'col' ? { kind: 'col', col: id!, x, y } : { kind: k, x, y }); }} />}
       </section>
     </div>
   );
@@ -446,23 +472,24 @@ const caretEnd = (e: React.FocusEvent<HTMLInputElement>) => { const n = e.curren
  * Una celda. En la cuadrícula (`grid`) se ve como texto y solo se convierte en cuadro de texto al editarla;
  * los menús (selección, fecha, relación…) se abren con doble clic o F2. Fuera de la cuadrícula (página de fila) se edita directamente.
  */
-function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefined, grid = false, editing = false }: { pm: Pm; col: Col; row: Row; tags: Opt[]; id: string; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; open: (e: React.MouseEvent) => void; timer?: (a: 'start' | 'stop' | 'reset') => void; grid?: boolean; editing?: boolean }) {
+function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefined, grid = false, editing = false, fmt }: { pm: Pm; col: Col; row: Row; tags: Opt[]; id: string; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; open: (e: React.MouseEvent) => void; timer?: (a: 'start' | 'stop' | 'reset') => void; grid?: boolean; editing?: boolean; fmt?: CellFmt }) {
   const v = row.cells[col.id];
+  const fs = fmtStyle(fmt);
   // Botones de menú: en la cuadrícula solo se seleccionan (el menú se abre con doble clic).
   const btn = grid ? { tabIndex: -1 } : { 'data-pop': true, onClick: open, onKeyDown: onKey };
   switch (col.type) {
     case 'text':
-      if (grid && !editing) return <div id={id} className="pm-in pm-view" aria-label={col.name}>{typeof v === 'string' ? v : ''}</div>;
-      return <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''} onChange={(e) => set(e.target.value)} onKeyDown={onKey} aria-label={col.name} autoFocus={grid} onFocus={grid ? caretEnd : undefined} />;
+      if (grid && !editing) return <div id={id} className="pm-in pm-view" style={fs} aria-label={col.name}>{typeof v === 'string' ? v : ''}</div>;
+      return <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''} onChange={(e) => set(e.target.value)} onKeyDown={onKey} aria-label={col.name} autoFocus={grid} onFocus={grid ? caretEnd : undefined} style={fs} />;
     case 'number':
-      if (grid && !editing) return <div id={id} className="pm-in num pm-view" aria-label={col.name} title={typeof v === 'number' ? formatNum(col, v) : ''}>{typeof v === 'number' ? formatNum(col, v) : ''}</div>;
-      return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} auto={grid} />;
+      if (grid && !editing) return <div id={id} className="pm-in num pm-view" style={fs} aria-label={col.name} title={typeof v === 'number' ? formatNum(col, v) : ''}>{typeof v === 'number' ? formatNum(col, v) : ''}</div>;
+      return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} auto={grid} style={fs} />;
     case 'formula': {
       const r = formulaValue(pm, col, row, tags);
-      return r.error ? <span className="pm-formula err" title={r.error}>⚠ Error</span> : <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')}>{formatFVal(col, r.value)}</span>;
+      return r.error ? <span className="pm-formula err" title={r.error}>⚠ Error</span> : <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')} style={fs}>{formatFVal(col, r.value)}</span>;
     }
     case 'rollup':
-      return <span className="pm-formula num">{cellText(pm, col, row, tags)}</span>;
+      return <span className="pm-formula num" style={fs}>{cellText(pm, col, row, tags)}</span>;
     case 'relation':
       return <button id={id} className="pm-btn" {...btn} aria-label={col.name}><RelPills v={v} /></button>;
     case 'image':
@@ -488,10 +515,10 @@ function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefine
   }
 }
 
-function NumberCell({ id, col, v, set, onKey, auto = false }: { id: string; col: Col; v: number | null; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto?: boolean }) {
+function NumberCell({ id, col, v, set, onKey, auto = false, style }: { style?: React.CSSProperties; id: string; col: Col; v: number | null; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto?: boolean }) {
   const [text, setText] = useState<string | null>(null);
   return (
-    <input id={id} className="pm-in num" inputMode="decimal" aria-label={col.name}
+    <input id={id} className="pm-in num" style={style} inputMode="decimal" aria-label={col.name}
       value={text ?? (v === null ? '' : formatNum(col, v))}
       placeholder={col.fmt === 'eur' ? '€' : col.fmt === 'h' ? 'h' : ''}
       title={v === null ? '' : formatNum(col, v)}
@@ -503,11 +530,11 @@ function NumberCell({ id, col, v, set, onKey, auto = false }: { id: string; col:
   );
 }
 
-function Popover({ pop, pm, card, close, op, rows, openImport, openPage, openPop }: { openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void; pop: Pop; pm: Pm; card: PmCard; close: () => void; op: (o: PmOp) => void; rows: Row[]; archived: number; openImport: (plan: CsvPlan, name: string) => void; openPage: (id: string) => void }) {
+function Popover({ pop, pm, card, close, closeTable, op, rows, openImport, openPage, openPop }: { closeTable: () => void; openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void; pop: Pop; pm: Pm; card: PmCard; close: () => void; op: (o: PmOp) => void; rows: Row[]; archived: number; openImport: (plan: CsvPlan, name: string) => void; openPage: (id: string) => void }) {
   const style = pop.kind === 'more' ? { right: 16, top: pop.y } : { left: Math.max(8, pop.x), top: pop.y };
   if (pop.kind === 'import') return <div className="pm-pop menu import" role="dialog" aria-label="Importar CSV"><ImportMenu pm={pm} card={card} plan={pop.plan} name={pop.name} close={close} /></div>;
   let body: ReactNode = null;
-  if (pop.kind === 'more') body = <OptionsMenu card={card} close={close} openPop={openPop} />;
+  if (pop.kind === 'more') body = <OptionsMenu card={card} close={close} closeTable={closeTable} openPop={openPop} />;
   if (pop.kind === 'csv') body = <CsvMenu pm={pm} card={card} rows={rows} op={op} close={close} openImport={openImport} />;
   if (pop.kind === 'view') body = <ViewMenu pm={pm} id={pop.id} op={op} close={close} />;
   if (pop.kind === 'addview') body = <AddViewMenu op={op} close={close} />;
@@ -838,7 +865,7 @@ function RowMenu({ pm, row, op, close, openPage }: { pm: Pm; row: string; op: (o
 
 
 /** «Opciones de la tabla». */
-function OptionsMenu({ card, close, openPop }: { card: PmCard; close: () => void; openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void }) {
+function OptionsMenu({ card, close, closeTable, openPop }: { card: PmCard; close: () => void; closeTable: () => void; openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void }) {
   const { state, dispatch, toast, copy } = useApp();
   const [tplName, setTplName] = useState<string | null>(null);
   const pm = card.pm;
@@ -866,7 +893,7 @@ function OptionsMenu({ card, close, openPop }: { card: PmCard; close: () => void
           <button className="primary small-btn" onClick={() => { dispatch({ t: 'pmTemplates', list: [...state.pmTemplates, asTemplate(pm, tplName.trim() || 'Mi plantilla')] }); toast('Plantilla guardada · aparecerá al crear una Tabla PM'); close(); }}>Guardar</button>
         </div>
       )}
-      <button onClick={() => { dispatch({ t: 'duplicateCard', id: card.id }); toast('Tabla duplicada'); close(); }}>⎘ Duplicar tabla</button>
+      <button onClick={() => { dispatch({ t: 'duplicateCard', id: card.id }); toast('Tabla duplicada'); close(); closeTable(); }}>⎘ Duplicar tabla</button>
       <div className="menu-sep" />
       <button className="danger-text" onClick={() => { dispatch({ t: 'trashCard', id: card.id }); toast('Tarjeta movida a la papelera'); close(); }}>🗑 Mover la tabla a la papelera</button>
     </>

@@ -28,13 +28,35 @@ describe('Tabla PM · arrastrar columnas sin tirones (mejora 1.1.0, fase 2)', ()
     const mv = new MouseEvent('pointermove', { clientX: 200, clientY: 10, bubbles: true });
     act(() => { window.dispatchEvent(mv); });
     expect(c.classList.contains('drop')).toBe(true);
+    // Se agarra la columna: sin selección de texto y con una etiqueta que sigue al ratón.
+    expect(document.body.classList.contains('pm-grabbing')).toBe(true);
+    expect(a.textContent).toContain(document.querySelector('.pm-ghost')!.textContent!);
     expect(a.classList.contains('drop')).toBe(false);
     // Es el mismo elemento del DOM: no se ha vuelto a dibujar.
     expect(ths()[2]).toBe(c);
     act(() => { window.dispatchEvent(new MouseEvent('pointerup', { clientX: 200, clientY: 10, bubbles: true })); });
     expect(dlg.querySelector('th.drop')).toBeNull();
+    expect(document.body.classList.contains('pm-grabbing')).toBe(false);
+    expect(document.querySelector('.pm-ghost')).toBeNull();
     const after = order();
     expect(after).not.toEqual(before);
     expect(after.indexOf(before[0]!)).toBe(2);
+  }, 30_000);
+});
+
+describe('Tabla PM · duplicar en edición', () => {
+  it('«Duplicar tabla» cierra la tabla abierta y se ven las dos tarjetas', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Inicio' });
+    await user.click(screen.getByText('+ Añadir tarjeta'));
+    await user.click(screen.getByRole('menuitem', { name: 'Tabla PM' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Nueva Tabla PM' })).getByText('Encargo artístico'));
+    const dlg = screen.getByRole('dialog', { name: /Tabla PM/ });
+    const before = document.querySelectorAll('.pm-compact').length;
+    await user.click(within(dlg).getByLabelText('Opciones de la tabla'));
+    await user.click(screen.getByText('⎘ Duplicar tabla'));
+    expect(dlg.isConnected).toBe(false);
+    expect(document.querySelectorAll('.pm-compact').length).toBe(before + 1);
   }, 30_000);
 });
