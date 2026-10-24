@@ -1,5 +1,7 @@
 // Estado de la app: un reductor puro (fácil de probar), un historial para deshacer/rehacer
 // y una cola que guarda en el núcleo solo los documentos que han cambiado.
+import { applyFmt } from './format';
+import type { CellFmt, FmtPatch } from './format';
 import type { Backend } from './backend';
 import { cellText, convert, pmReduce, pmTemplate, runningTimer, strList } from './pm';
 import { applyImport } from './pmio';
@@ -56,6 +58,8 @@ export type Action =
   | { t: 'markNotified'; ids: string[]; at: number }
   | { t: 'view'; view: State['view'] }
   | { t: 'addProject'; id: string; name: string; color: string; folder?: string | null }
+  /** Mueve una tarea principal a una carpeta (o a «sin carpeta») y la deja antes de `before` (al final si es null). Un solo paso de deshacer. */
+  | { t: 'moveProject'; id: string; folder: string | null; before: string | null }
   | { t: 'addFolder'; id: string; name: string }
   | { t: 'patchFolder'; id: string; patch: Partial<Omit<Folder, 'id'>> }
   | { t: 'deleteFolder'; id: string }
@@ -81,6 +85,10 @@ export type Action =
   | { t: 'tableCell'; card: string; row: string; col: number; value: string }
   | { t: 'tableHead'; card: string; col: number; value: string }
   | { t: 'tableAddRow'; card: string; id: string }
+  /** Formato de varias tareas de una checklist a la vez. */
+  | { t: 'checkFormat'; card: string; ids: string[]; patch: FmtPatch }
+  /** Formato de varias celdas de una Tabla (r = -1 son las cabeceras). */
+  | { t: 'tableFormat'; card: string; cells: { r: number; c: number }[]; patch: FmtPatch }
   /** Escribe una matriz de textos desde (r0, c0); r0 = -1 es la fila de cabeceras. Crea las filas (con `ids`) y columnas que falten. Un solo paso de deshacer. */
   | { t: 'tableSetRange'; card: string; r0: number; c0: number; data: string[][]; ids: string[] }
   | { t: 'tableRemoveRow'; card: string; row: string }
@@ -269,6 +277,25 @@ export function reduce(s: State, a: Action): Effect {
       const projects = s.projects.map((p) => moved.find((m) => m.id === p.id) ?? p);
       return { state: { ...s, folders: s.folders.filter((f) => f.id !== a.id), projects }, put: moved.map(projectToDoc), del: [a.id] };
     }
+    case 'moveProject': {
+      const p = s.projects.find((x) => x.id === a.id);
+      if (!p || p.home || p.hidden || p.id === a.before) return none(s);
+      const folder = a.folder && s.folders.some((f) => f.id === a.folder) ? a.folder : null;
+      const group = (x: Project) => !x.trashed && !x.hidden && !x.home && (x.folder && s.folders.some((f) => f.id === x.folder) ? x.folder : null) === folder;
+      const rest = s.projects.filter((x) => x.id !== p.id);
+      const moved: Project = { ...p, folder };
+      // Antes de `before`; sin él, tras la última tarea de ese grupo (o al final de todo).
+      let at = a.before ? rest.findIndex((x) => x.id === a.before) : -1;
+      if (at < 0) { let last = -1; rest.forEach((x, i) => { if (group(x)) last = i; }); at = last < 0 ? rest.length : last + 1; }
+      const next = [...rest.slice(0, at), moved, ...rest.slice(at)];
+      // Se renumeran las posiciones (menos las del Inicio y las internas) para que el orden quede fijo.
+      let n = 0;
+      const projects = next.map((x) => (x.home || x.hidden ? x : { ...x, pos: ++n }));
+      const old = new Map(s.projects.map((x) => [x.id, x]));
+      const put = projects.filter((x) => { const o = old.get(x.id)!; return o.pos !== x.pos || o.folder !== x.folder; }).map(projectToDoc);
+      if (!put.length && projects.every((x, i) => x.id === s.projects[i].id)) return none(s);
+      return { state: { ...s, projects }, put, del: [] };
+    }
     case 'patchProject':
     case 'trashProject':
     case 'restoreProject': {
@@ -391,6 +418,29 @@ export function reduce(s: State, a: Action): Effect {
         }
         return { ...c, items: normalizeLevels(items) };
       });
+    case 'checkFormat':
+      return withCard(a.card, (c) => {
+        if (c.type !== 'check') return c;
+        const ids = new Set(a.ids);
+        return { ...c, items: c.items.map((it) => { if (!ids.has(it.id)) return it; const { fmt: _f, ...rest } = it; void _f; const n = applyFmt(it.fmt, a.patch); return n ? { ...rest, fmt: n } : rest; }) };
+      });
+    case 'tableFormat':
+      return withCard(a.card, (c) => {
+        if (c.type !== 'table') return c;
+        const headFmt: (CellFmt | null)[] = [...(c.headFmt ?? [])];
+        const rows = c.rows.map((r) => ({ ...r, fmt: [...(r.fmt ?? [])] }));
+        for (const { r, c: col } of a.cells) {
+          const arr = r < 0 ? headFmt : rows[r]?.fmt;
+          if (!arr) continue;
+          while (arr.length <= col) arr.push(null);
+          arr[col] = applyFmt(arr[col], a.patch) ?? null;
+        }
+        const trim = (x: (CellFmt | null)[]) => (x.some(Boolean) ? x : undefined);
+        const out = { ...c, rows: rows.map((r) => { const { fmt, ...rest } = r; const t = trim(fmt ?? []); return t ? { ...rest, fmt: t } : rest; }) } as typeof c;
+        const hf = trim(headFmt);
+        if (hf) out.headFmt = hf; else delete out.headFmt;
+        return out;
+      });
     case 'tableSetRange':
       return withCard(a.card, (c) => {
         if (c.type !== 'table') return c;
@@ -420,8 +470,9 @@ export function reduce(s: State, a: Action): Effect {
         if (a.t === 'tableAddRow') rows = [...rows, { id: a.id, cells: heads.map(() => '') }];
         if (a.t === 'tableRemoveRow') rows = rows.length > 1 ? rows.filter((r) => r.id !== a.row) : rows;
         if (a.t === 'tableAddCol') { heads = [...heads, 'Columna ' + (heads.length + 1)]; rows = rows.map((r) => ({ ...r, cells: [...r.cells, ''] })); }
-        if (a.t === 'tableRemoveCol' && heads.length > 1) { heads = heads.filter((_, i) => i !== a.col); rows = rows.map((r) => ({ ...r, cells: r.cells.filter((_, i) => i !== a.col) })); }
-        return { ...c, heads, rows };
+        let headFmt = c.headFmt;
+        if (a.t === 'tableRemoveCol' && heads.length > 1) { heads = heads.filter((_, i) => i !== a.col); rows = rows.map((r) => ({ ...r, cells: r.cells.filter((_, i) => i !== a.col), ...(r.fmt ? { fmt: r.fmt.filter((_, i) => i !== a.col) } : {}) })); if (headFmt) headFmt = headFmt.filter((_, i) => i !== a.col); }
+        return { ...c, heads, rows, ...(headFmt ? { headFmt } : {}) };
       });
     case 'backupDone': {
       const settings = { ...s.settings, backup: { ...s.settings.backup, [a.level]: { ...s.settings.backup[a.level], ...a.patch } } as BackupSettings };

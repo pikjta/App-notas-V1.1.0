@@ -1,3 +1,4 @@
+import type { CellFmt } from './format';
 import type { Opt, Pm } from './pm';
 import type { PmTemplate } from './pmio';
 import type { Country } from './holidays';
@@ -22,6 +23,8 @@ export type Project = {
   name: string;
   color: string;
   home?: boolean;
+  /** Icono propio de la barra lateral (clave de lib/icons); sin él se ve el punto de color. */
+  icon?: string | null;
   folder: string | null;
   pos: number;
   links?: Link[];
@@ -39,8 +42,9 @@ export type Folder = { id: string; name: string; collapsed: boolean; pos: number
 export const folderToDoc = (f: Folder): Doc => { const { id, pos, ...data } = f; return { id, kind: 'folder', parent: null, pos, updated: Date.now(), data }; };
 
 /** `level`: 0 = tarea, 1 = subtarea, 2 = sub-subtarea… (hasta MAX_LEVEL en lib/checklist.ts). */
-export type CheckItem = { id: string; text: string; done: boolean; level: number };
-export type TableRow = { id: string; cells: string[] };
+export type CheckItem = { id: string; text: string; done: boolean; level: number; fmt?: CellFmt };
+/** `fmt` es el formato de cada celda de la fila (mismo orden que `cells`). */
+export type TableRow = { id: string; cells: string[]; fmt?: (CellFmt | null)[] };
 
 type CardBase = {
   id: string;
@@ -65,7 +69,7 @@ export type ReminderCard = CardBase & { type: 'reminder'; when: string | null; b
 export type PmCard = CardBase & { type: 'pm'; pm: Pm };
 export type WidgetKind = 'today' | 'upcoming' | 'projects';
 export type WidgetCard = CardBase & { type: 'widget'; widget: WidgetKind };
-export type TableCard = CardBase & { type: 'table'; heads: string[]; rows: TableRow[] };
+export type TableCard = CardBase & { type: 'table'; heads: string[]; rows: TableRow[]; headFmt?: (CellFmt | null)[] };
 /** La imagen en sí se guarda aparte (documento «asset») para no reescribirla al mover la tarjeta. */
 export type ImageCard = CardBase & { type: 'image'; asset: string | null; name: string };
 export type Stroke = { c: string; s: number; o: number; p: [number, number][] };

@@ -1,3 +1,5 @@
+import { applyFmt } from './format';
+import type { CellFmt, FmtPatch } from './format';
 import { runFormula } from './formula';
 import type { FVal } from './formula';
 // Tabla PM (seguimiento de proyecto, estilo Notion): lógica pura, sin interfaz.
@@ -49,6 +51,8 @@ export type HistEntry = { state: string | null; at: number };
 export type Row = {
   id: string;
   cells: Record<string, CellVal>;
+  /** Formato de cada celda (por id de columna). */
+  fmt?: Record<string, CellFmt>;
   /** Página de la fila: descripción en Markdown, subtareas, dependencias e historial. */
   desc?: string;
   subs?: Sub[];
@@ -413,11 +417,28 @@ export type PmOp =
   | { op: 'group'; col: string | null }
   /** Varios cambios como un solo paso (pegar un rango, vaciar una selección). */
   | { op: 'batch'; ops: PmOp[] }
+  /** Formato (negrita, color…) de varias celdas a la vez. */
+  | { op: 'format'; cells: { row: string; col: string }[]; patch: FmtPatch }
   | { op: 'replace'; pm: Pm };
 
 export function pmReduce(pm: Pm, o: PmOp): Pm {
   switch (o.op) {
     case 'batch': return o.ops.reduce(pmReduce, pm);
+    case 'format': {
+      const by = new Map<string, string[]>();
+      for (const c of o.cells) by.set(c.row, [...(by.get(c.row) ?? []), c.col]);
+      return {
+        ...pm,
+        rows: pm.rows.map((r) => {
+          const cols = by.get(r.id);
+          if (!cols) return r;
+          const fmt: Record<string, CellFmt> = { ...(r.fmt ?? {}) };
+          for (const c of cols) { const n = applyFmt(fmt[c], o.patch); if (n) fmt[c] = n; else delete fmt[c]; }
+          const { fmt: _old, ...rest } = r; void _old;
+          return Object.keys(fmt).length ? { ...rest, fmt } : rest;
+        }),
+      };
+    }
     case 'addRow': {
       const row: Row = { id: o.id, cells: o.cells ? { ...o.cells } : {} };
       const at = o.after ? pm.rows.findIndex((r) => r.id === o.after) + 1 : pm.rows.length;
