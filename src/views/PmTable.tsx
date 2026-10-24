@@ -5,7 +5,7 @@ import { dayKey } from '../lib/agenda';
 import type { PmCard } from '../lib/model';
 import { activeViewId, allStates, COLOR_KEYS, COLORS, FILTER_OPS, formatDate, formatNum, newCol, optsOf, pmId, progress, stateInfo, tableProgress, total, TOTALS, TYPE_ICON, TYPE_LABEL, VIEW_LABEL, pmViews, visibleRows } from '../lib/pm';
 import type { CellVal, Col, ColType, DateVal, Filter, NumFmt, Opt, Phase, Pm, PmOp, PmView, Row, Sort } from '../lib/pm';
-import { cellText, formatFVal, formulaValue, ROLL_FNS, rowTitle, asTimer, blockers, strList, dateColOf, defaultKanban, formatTimer, ruleFor, timerMs } from '../lib/pm';
+import { cellText, colLetter, displayExpr, formatFVal, formulaValue, rowNumber, storeExpr, ROLL_FNS, rowTitle, asTimer, blockers, strList, dateColOf, defaultKanban, formatTimer, ruleFor, timerMs } from '../lib/pm';
 import type { Rule } from '../lib/pm';
 import { PmCalendar } from './pm/PmCalendar';
 import { Timeline } from './pm/Timeline';
@@ -14,6 +14,7 @@ import type { CsvPlan } from '../lib/pmio';
 import { Kanban, KanbanPicker } from './pm/Kanban';
 import { ImageMenu, ImageThumbs, RelationMenu, RelPills } from './pm/Linked';
 import { checkFormula, FUNCTION_HELP, propsIn } from '../lib/formula';
+import { FormulaErrorDialog } from '../components/FormulaErrorDialog';
 import { RowPage } from './pm/RowPage';
 import { allOf, inRect, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../lib/grid';
 import type { Dims, Pos, Sel } from '../lib/grid';
@@ -319,7 +320,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
   const rowEl = (r: Row, ri: number, gi: number) => (
                 <tr key={r.id} data-row={r.id} style={ruleStyle(r)} className={(ruleFor(pm, r, tags, today) ? 'ruled ' : '') + (ruleFor(pm, r, tags, today)?.bold ? 'rule-bold ' : '') + (r.archived ? ' archived' : '') + (page === r.id ? ' paged' : '')}>
                   <td className="pm-grip" title="Arrastra para mover · clic para opciones" onPointerDown={(e) => startDrag(e, 'row', r.id, (ev) => setPop({ kind: 'row', row: r.id, ...at(ev) }))}>
-                    <span className="small muted">{ri + 1}</span><span className="grip-dots">⠿</span>
+                    <span className="small muted" title="Número de fila para las fórmulas (B2 = columna B, fila 2)">{rowNumber(pm, r.id) || ri + 1}</span><span className="grip-dots">⠿</span>
                   </td>
                   {cols.map((c, k) => (
                     <td key={c.id} data-r={gi} data-c={k} role="gridcell" aria-selected={!!(selRect && inRect(selRect, gi, k))}
@@ -394,7 +395,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
                 {cols.map((c, k) => {
                   const sort = pm.sorts.find((s) => s.col === c.id);
                   return (
-                    <th key={c.id} data-col={c.id} className={(k === 0 ? 'sticky ' : '')} style={{ width: c.w, minWidth: c.w, left: k === 0 ? GRIP : undefined }}
+                    <th key={c.id} data-col={c.id} data-letter={colLetter(pm.cols.indexOf(c))} className={(k === 0 ? 'sticky ' : '')} style={{ width: c.w, minWidth: c.w, left: k === 0 ? GRIP : undefined }}
                       onPointerDown={(e) => startDrag(e, 'col', c.id, (ev) => setPop({ kind: 'col', col: c.id, ...at(ev) }))}>
                       <span className="th-in" data-pop><span className="th-icon">{TYPE_ICON[c.type]}</span><span className="grow ellipsis">{c.name || 'Sin nombre'}</span>{sort && <span className="small">{sort.dir === 'asc' ? '↑' : '↓'}</span>}<span className="small muted">▾</span></span>
                       <span className="col-resize" onPointerDown={(e) => startResize(e, c)} aria-hidden="true" />
@@ -485,8 +486,7 @@ function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefine
       if (grid && !editing) return <div id={id} className="pm-in num pm-view" style={fs} aria-label={col.name} title={typeof v === 'number' ? formatNum(col, v) : ''}>{typeof v === 'number' ? formatNum(col, v) : ''}</div>;
       return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} auto={grid} style={fs} />;
     case 'formula': {
-      const r = formulaValue(pm, col, row, tags);
-      return r.error ? <span className="pm-formula err" title={r.error}>⚠ Error</span> : <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')} style={fs}>{formatFVal(col, r.value)}</span>;
+      return <FormulaCell pm={pm} col={col} row={row} tags={tags} style={fs} />;
     }
     case 'rollup':
       return <span className="pm-formula num" style={fs}>{cellText(pm, col, row, tags)}</span>;
@@ -984,18 +984,30 @@ function ImportMenu({ pm, card, plan, name, close }: { pm: Pm; card: PmCard; pla
   );
 }
 
+function FormulaCell({ pm, col, row, tags, style }: { pm: Pm; col: Col; row: Row; tags: Opt[]; style?: React.CSSProperties }) {
+  const [open, setOpen] = useState(false);
+  const r = formulaValue(pm, col, row, tags);
+  if (!r.error) return <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')} style={style}>{formatFVal(col, r.value)}</span>;
+  return (
+    <>
+      <button className="pm-formula err" title={r.error + ' · clic para ver la explicación'} data-nogrid onClick={() => setOpen(true)}>⚠ Error</button>
+      {open && <FormulaErrorDialog error={r.error} formula={displayExpr(pm, col.expr ?? '')} where={`Columna ${colLetter(pm.cols.indexOf(col))} «${col.name}», fila ${rowNumber(pm, row.id)}`} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
 function FormulaEditor({ pm, col, patch }: { pm: Pm; col: Col; patch: (p: Partial<Col>) => void }) {
-  const [text, setText] = useState(col.expr ?? '');
+  const [text, setText] = useState(displayExpr(pm, col.expr ?? ''));
   const ta = useRef<HTMLTextAreaElement>(null);
   const syntax = text.trim() ? checkFormula(text) : null;
   const missing = syntax ? [] : propsIn(text).filter((n) => !pm.cols.some((c) => c.name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase() === n.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()));
   const err = syntax ?? (missing.length ? `No hay ninguna propiedad «${missing[0]}».` : null);
-  const insert = (t: string) => { const el = ta.current; const a = el?.selectionStart ?? text.length; const next = text.slice(0, a) + t + text.slice(el?.selectionEnd ?? a); setText(next); if (!checkFormula(next)) patch({ expr: next }); requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(a + t.length, a + t.length); }); };
+  const insert = (t: string) => { const el = ta.current; const a = el?.selectionStart ?? text.length; const next = text.slice(0, a) + t + text.slice(el?.selectionEnd ?? a); setText(next); if (!checkFormula(next)) patch({ expr: storeExpr(pm, next) }); requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(a + t.length, a + t.length); }); };
   return (
     <div className="formula-ed">
       <span className="menu-label">Fórmula</span>
-      <textarea ref={ta} value={text} rows={3} spellCheck={false} aria-label="Fórmula" placeholder="{Presupuesto} * 1.21"
-        onChange={(e) => { setText(e.target.value); if (!checkFormula(e.target.value) || !e.target.value.trim()) patch({ expr: e.target.value }); }} />
+      <textarea ref={ta} value={text} rows={3} spellCheck={false} aria-label="Fórmula" placeholder="{Presupuesto} * 1.21  ·  B2 * C2  ·  suma(B:B)"
+        onChange={(e) => { setText(e.target.value); if (!checkFormula(e.target.value) || !e.target.value.trim()) patch({ expr: storeExpr(pm, e.target.value) }); }} />
       {err ? <span className="err small">{err}</span> : text.trim() ? <span className="small ok">✓ Fórmula correcta</span> : null}
       <div className="formula-props">{pm.cols.filter((c) => c.id !== col.id).map((c) => <button key={c.id} className="chip" onClick={() => insert(`{${c.name}}`)}>{c.name}</button>)}</div>
       <span className="small muted">{FUNCTION_HELP}</span>

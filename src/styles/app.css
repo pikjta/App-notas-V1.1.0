@@ -951,3 +951,21 @@ body.pm-grabbing, body.pm-grabbing * { user-select: none !important; cursor: gra
 
 .pm-toolbar .fmt-bar { padding: 0; margin-right: 6px; flex-wrap: nowrap; }
 .pm-in { color: inherit; }
+
+/* Fase 4 · fórmulas con referencias */
+.formula-err-dlg { width: 520px; max-width: 94vw; }
+.formula-err-dlg h2 { font-family: var(--serif); margin: 0; padding: 18px 22px 0; font-size: 22px; color: #c8372d; }
+.formula-err-dlg .row.end { display: flex; justify-content: flex-end; gap: 8px; }
+.fx-code { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; background: var(--card-soft); border: 1px solid var(--card-line); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; }
+button.pm-formula.err { border: 0; background: transparent; font: inherit; width: 100%; text-align: left; cursor: pointer; }
+.pm-grid th[data-letter]::before { content: attr(data-letter); position: absolute; left: 3px; top: 1px; font-size: 9px; font-weight: 700; color: var(--card-muted); opacity: 0.8; pointer-events: none; }
+.pm-grid th[data-letter] { position: relative; }
+.tbl-fbar { display: flex; align-items: center; gap: 8px; padding: 3px 6px; margin-bottom: 4px; border: 1px solid var(--card-line); border-radius: 8px; background: var(--card-soft); font-size: 12px; }
+.tbl-fbar b { min-width: 34px; text-align: center; border-right: 1px solid var(--card-line); padding-right: 8px; }
+.tbl-fbar .fx { color: var(--card-muted); font-style: italic; }
+.tbl-fbar code { font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tbl-wrap:focus-within td[data-ref]::after, .tbl-wrap:focus-within th[data-ref]::after { content: attr(data-ref); position: absolute; right: 2px; top: 0; font-size: 8px; color: var(--card-muted); opacity: 0.7; pointer-events: none; }
+.tbl td[data-ref], .tbl th[data-ref] { position: relative; }
+.tbl-text.formula { font-variant-numeric: tabular-nums; }
+.tbl-text.err { color: #c8372d; font-weight: 700; cursor: help; }
+.tbl-err { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; }

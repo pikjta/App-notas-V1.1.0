@@ -6,6 +6,8 @@ import type { CellFmt } from '../../lib/format';
 import { useApp } from '../../App';
 import type { TableCard } from '../../lib/model';
 import { uid } from '../../lib/model';
+import { FormulaErrorDialog } from '../FormulaErrorDialog';
+import { calcCell, cellName, isFormula, showValue } from '../../lib/tablecalc';
 import { allOf, inRect, isAll, isSingle, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../../lib/grid';
 import type { Pos, Sel } from '../../lib/grid';
 
@@ -26,6 +28,7 @@ export function TableBody({ card }: { card: TableCard }) {
   const wrap = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLInputElement>(null);
   const down = useRef(false);
+  const [errDlg, setErrDlg] = useState<{ r: number; c: number } | null>(null);
 
   const dims = { minRow: -1, rows: card.rows.length, cols: card.heads.length };
   const valueAt = (r: number, c: number) => (r < 0 ? card.heads[c] : card.rows[r]?.cells[c]) ?? '';
@@ -45,7 +48,7 @@ export function TableBody({ card }: { card: TableCard }) {
     return () => window.removeEventListener('mouseup', up);
   }, []);
 
-  const words = useMemo(() => (edit && edit.pos.r >= 0 ? card.rows.filter((_, i) => i !== edit.pos.r).map((r) => r.cells[edit.pos.c] ?? '') : []), [card.rows, edit?.pos.r, edit?.pos.c]); // eslint-disable-line react-hooks/exhaustive-deps
+  const words = useMemo(() => (edit && edit.pos.r >= 0 ? card.rows.filter((_, i) => i !== edit.pos.r).map((r) => r.cells[edit.pos.c] ?? '').filter((w) => !isFormula(w)) : []), [card.rows, edit?.pos.r, edit?.pos.c]); // eslint-disable-line react-hooks/exhaustive-deps
   const list = edit ? suggest(edit.text, words) : [];
   const select = (a: Pos, b: Pos = a) => setSel({ a, b });
   const startEdit = (pos: Pos, text?: string) => { select(pos); setHint(-1); setEdit({ pos, text: text ?? valueAt(pos.r, pos.c), orig: valueAt(pos.r, pos.c) }); };
@@ -124,9 +127,18 @@ export function TableBody({ card }: { card: TableCard }) {
   const rc = sel ? rectOf(sel) : null;
   const cls = (r: number, c: number) => (rc && inRect(rc, r, c) ? 'sel' : '') + (sel && sel.a.r === r && sel.a.c === c ? ' cur' : '');
   const cellProps = (r: number, c: number) => ({
-    'data-r': r, 'data-c': c, className: cls(r, c) + (edit && edit.pos.r === r && edit.pos.c === c ? ' editing' : ''), role: 'gridcell' as const, 'aria-selected': !!(rc && inRect(rc, r, c)),
+    'data-r': r, 'data-c': c, 'data-ref': cellName(r, c), className: cls(r, c) + (edit && edit.pos.r === r && edit.pos.c === c ? ' editing' : ''), role: 'gridcell' as const, 'aria-selected': !!(rc && inRect(rc, r, c)),
     onMouseDown: (e: React.MouseEvent) => cellDown(e, { r, c }), onMouseEnter: () => cellEnter({ r, c }), onDoubleClick: (e: React.MouseEvent) => { if (!(e.target as Element).closest('button')) startEdit({ r, c }); },
   });
+  /** Contenido de una celda: su texto o, si empieza por «=», el resultado de la fórmula. */
+  const body = (r: number, c: number) => {
+    const raw = valueAt(r, c);
+    const st = fmtStyle(fmtAt(r, c));
+    if (!isFormula(raw)) return <div className="tbl-text" style={st}>{raw}</div>;
+    const res = calcCell(card, r, c);
+    if (res.error) return <div className="tbl-text formula err"><button className="tbl-err" title={res.error + ' · clic para ver la explicación'} onClick={() => setErrDlg({ r, c })}>⚠ Error</button></div>;
+    return <div className="tbl-text formula" style={st} title={raw}>{showValue(res.value)}</div>;
+  };
   const editing = (r: number, c: number) => !!edit && edit.pos.r === r && edit.pos.c === c;
   const editorEl = (label: string, f?: CellFmt) => edit && (
     <input ref={editor} className="tbl-edit" style={fmtStyle(f)} value={edit.text} aria-label={label} autoFocus spellCheck={false}
@@ -144,13 +156,14 @@ export function TableBody({ card }: { card: TableCard }) {
         return <FormatBar align fmts={cells.map((x) => fmtAt(x.r, x.c))} disabled={!cells.length} label="Formato de las celdas"
           onPatch={(patch) => dispatch({ t: 'tableFormat', card: card.id, cells, patch })} onAfter={() => proxy.current?.focus({ preventScroll: true })} />;
       })()}
+      {sel && <div className="tbl-fbar" aria-label="Celda activa"><b>{cellName(sel.b.r, sel.b.c)}</b><span className="fx">ƒx</span><code>{valueAt(sel.b.r, sel.b.c)}</code></div>}
       <table className="tbl">
         <thead>
           <tr>
-            {card.heads.map((h, i) => (
+            {card.heads.map((_h, i) => (
               <th key={i} {...cellProps(-1, i)} aria-label={editing(-1, i) ? undefined : `Nombre de la columna ${i + 1}`}>
                 <div className="th">
-                  {editing(-1, i) ? editorEl(`Nombre de la columna ${i + 1}`, fmtAt(-1, i)) : <div className="tbl-text" style={fmtStyle(fmtAt(-1, i))}>{h}</div>}
+                  {editing(-1, i) ? editorEl(`Nombre de la columna ${i + 1}`, fmtAt(-1, i)) : body(-1, i)}
                   {card.heads.length > 1 && <button className="x" aria-label="Eliminar columna" title="Eliminar columna" onClick={() => dispatch({ t: 'tableRemoveCol', card: card.id, col: i })}>×</button>}
                 </div>
               </th>
@@ -161,9 +174,9 @@ export function TableBody({ card }: { card: TableCard }) {
         <tbody>
           {card.rows.map((r, ri) => (
             <tr key={r.id}>
-              {r.cells.map((v, ci) => (
+              {r.cells.map((_v, ci) => (
                 <td key={ci} {...cellProps(ri, ci)} aria-label={editing(ri, ci) ? undefined : `Fila ${ri + 1}, ${card.heads[ci]}`}>
-                  {editing(ri, ci) ? editorEl(`Fila ${ri + 1}, ${card.heads[ci]}`, fmtAt(ri, ci)) : <div className="tbl-text" style={fmtStyle(fmtAt(ri, ci))}>{v}</div>}
+                  {editing(ri, ci) ? editorEl(`Fila ${ri + 1}, ${card.heads[ci]}`, fmtAt(ri, ci)) : body(ri, ci)}
                 </td>
               ))}
               <td className="tbl-add">{card.rows.length > 1 && <button className="x" aria-label="Eliminar fila" title="Eliminar fila" onClick={() => dispatch({ t: 'tableRemoveRow', card: card.id, row: r.id })}>×</button>}</td>
@@ -185,6 +198,7 @@ export function TableBody({ card }: { card: TableCard }) {
           write(plan.at.r, plan.at.c, plan.data);
         }} />
       {edit && <SuggestList anchor={editor.current} items={list} hint={hint} watch={edit.text} onPick={(s) => { accept(s); editor.current?.focus(); }} />}
+      {errDlg && (() => { const res = calcCell(card, errDlg.r, errDlg.c); return res.error ? <FormulaErrorDialog error={res.error} formula={valueAt(errDlg.r, errDlg.c)} where={`Celda ${cellName(errDlg.r, errDlg.c)}`} onClose={() => { setErrDlg(null); proxy.current?.focus({ preventScroll: true }); }} onEdit={() => startEdit({ r: errDlg.r, c: errDlg.c })} /> : null; })()}
       {sel && !edit && isAll(sel, dims) && !isSingle(sel) && <span className="sr-only" aria-live="polite">Toda la tabla seleccionada</span>}
     </div>
   );
