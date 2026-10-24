@@ -1,7 +1,7 @@
 import { applyFmt } from './format';
 import type { CellFmt, FmtPatch } from './format';
-import { runFormula } from './formula';
-import type { FVal } from './formula';
+import { mapRefs, runFormula } from './formula';
+import type { FVal, Ref } from './formula';
 // Tabla PM (seguimiento de proyecto, estilo Notion): lógica pura, sin interfaz.
 // Una tabla vive dentro de una tarjeta de tipo «pm»; las etiquetas globales se comparten
 // entre todas las tablas de la app.
@@ -872,17 +872,72 @@ function propValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth: number): FVal
 
 const fold2 = (t: string) => t.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 
+/** Letra de la columna (A, B… Z, AA…) según su posición en la tabla. */
+export function colLetter(i: number): string { let n = i + 1, s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+const letterIndex = (l: string) => l.toUpperCase().split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+/** Número de fila (1, 2, 3…) según el orden de la tabla, sin contar filtros ni orden de la vista. */
+export const rowNumber = (pm: Pm, id: string) => pm.rows.findIndex((r) => r.id === id) + 1;
+
+const NO_CELL = 'La referencia apunta a una celda que ya no existe (se borró su fila o su columna).';
+/** Columna y fila (o null si es la columna entera) a las que apunta una referencia. */
+function resolveRef(pm: Pm, r: Ref): { col: Col; row: Row | null } {
+  const col = r.k === 'id' ? pm.cols.find((c) => c.id === r.c) : pm.cols[letterIndex(r.col)];
+  if (!col) throw new Error(r.k === 'id' ? NO_CELL : `No existe la columna ${r.col}.`);
+  if (r.k === 'id' ? r.r === '*' : r.row === 0) return { col, row: null };
+  const row = r.k === 'id' ? pm.rows.find((x) => x.id === r.r) : pm.rows[r.row - 1];
+  if (!row) throw new Error(r.k === 'id' ? NO_CELL : `No existe la fila ${r.row}.`);
+  return { col, row };
+}
+
+/** Texto de la fórmula tal como se escribe (B2, B2:B9, B:B) → como se guarda (por id de columna y de fila). */
+export function storeExpr(pm: Pm, text: string): string {
+  return mapRefs(text, (r) => {
+    if (r.k !== 'ref') return null;
+    const col = pm.cols[letterIndex(r.col)];
+    if (!col) return null;
+    if (r.row === 0) return `{#${col.id}:*}`;
+    const row = pm.rows[r.row - 1];
+    return row ? `{#${col.id}:${row.id}}` : null;
+  });
+}
+/** Al revés: la fórmula guardada se muestra con las letras y números de hoy. Lo que ya no existe se marca como #REF. */
+export function displayExpr(pm: Pm, stored: string): string {
+  return mapRefs(stored, (r) => {
+    if (r.k !== 'id') return null;
+    const ci = pm.cols.findIndex((c) => c.id === r.c);
+    if (ci < 0) return '#REF';
+    if (r.r === '*') return colLetter(ci);
+    const ri = pm.rows.findIndex((x) => x.id === r.r);
+    return ri < 0 ? '#REF' : colLetter(ci) + (ri + 1);
+  });
+}
+
 export function formulaValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth = 0): { value: FVal; error: string | null } {
   if (!col.expr?.trim()) return { value: null, error: null };
   if (depth > 8) return { value: null, error: 'Referencia circular entre fórmulas' };
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const read = (c: Col, r: Row) => {
+      if (c.id === col.id && r.id === row.id) throw new Error('Referencia circular entre fórmulas');
+      return propValue(pm, c, r, tags, depth + 1);
+    };
     const value = runFormula(col.expr, (name) => {
-      const c = pm.cols.find((x) => fold2(x.name) === fold2(name));
+      const c = pm.cols.find((x) => fold2(x.name) === fold2(name)) ?? (/^[A-Za-z]{1,3}$/.test(name.trim()) ? pm.cols[letterIndex(name.trim())] : undefined);
       if (!c) throw new Error(`No hay ninguna propiedad «${name}».`);
       if (c.id === col.id) throw new Error('Referencia circular entre fórmulas');
       return propValue(pm, c, row, tags, depth + 1);
-    }, today);
+    }, today, {
+      cell: (ref) => { const t = resolveRef(pm, ref); if (!t.row) throw new Error('Una columna entera (como B:B) solo se puede usar dentro de una función, por ejemplo suma(B:B).'); return read(t.col, t.row); },
+      range: (a, b) => {
+        const A = resolveRef(pm, a), B = resolveRef(pm, b);
+        const c0 = Math.min(pm.cols.indexOf(A.col), pm.cols.indexOf(B.col)), c1 = Math.max(pm.cols.indexOf(A.col), pm.cols.indexOf(B.col));
+        const whole = !A.row || !B.row;
+        const r0 = whole ? 0 : Math.min(pm.rows.indexOf(A.row!), pm.rows.indexOf(B.row!)), r1 = whole ? pm.rows.length - 1 : Math.max(pm.rows.indexOf(A.row!), pm.rows.indexOf(B.row!));
+        const out: FVal[] = [];
+        for (let ri = r0; ri <= r1; ri++) { const r = pm.rows[ri]; if (r.archived) continue; for (let ci = c0; ci <= c1; ci++) { const c = pm.cols[ci]; if (c.id === col.id && r.id === row.id) throw new Error('Referencia circular entre fórmulas'); out.push(read(c, r)); } }
+        return out;
+      },
+    });
     return { value: typeof value === 'number' && !isFinite(value) ? null : value, error: null };
   } catch (e) { return { value: null, error: (e as Error).message }; }
 }
