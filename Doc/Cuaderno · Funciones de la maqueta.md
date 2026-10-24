@@ -100,6 +100,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 
 - Tareas con casilla y subtareas plegables. Las tareas con subtareas muestran un estado parcial y su contador.
 - Botones «Añadir tarea» y «Añadir subtarea» (pregunta «¿Dentro de qué tarea?»). **En la app** (mejora 1.1.0) solo queda «+ Añadir tarea» abajo; cada tarea y cada subtarea tiene un botón (+) junto al de plegar que añade una subtarea (hasta 5 niveles, con la viñeta de cada nivel más a la derecha), y ya no existe la pregunta «¿Dentro de qué tarea?».
+- **En la app** (mejora 1.1.0): una barra de formato (negrita, cursiva, subrayado, tachado, color de texto y resaltado) sobre la lista aplica el formato a las tareas seleccionadas.
 - Atajo: Tab convierte una tarea en subtarea de la anterior y Mayús+Tab lo deshace. **En la app** (mejora 1.1.0): el texto largo se parte en varias líneas (en cualquier carácter, como una terminal); ↑ y ↓ pasan a la tarea anterior o siguiente (en un texto de varias líneas, desde la primera o la última); Ctrl+A selecciona todas las tareas (también se pueden seleccionar con el ratón arrastrando de una tarea a otra o con Mayús+clic, y se copian igual con Ctrl+C; dentro de una tarea el ratón selecciona texto con normalidad), Ctrl+C las copia como Markdown (`- [ ] tarea`, con sangría para las subtareas), Ctrl+X las corta y Ctrl+V pega varias líneas como varias tareas (con todo seleccionado, reemplaza la lista).
 - La tarjeta muestra su progreso, que suma al de la tarea principal.
 
@@ -167,6 +168,8 @@ Gestor de proyectos estilo Notion dentro de una tarjeta. Se abre en grande en un
 - Tabla vacía (solo una columna de texto).
 
 Las plantillas propias aparecen con la etiqueta «TUYA» y se pueden eliminar.
+
+**En la app (mejora 1.1.0) · formato, columnas y tareas.** La vista Tabla tiene una barra de formato a la izquierda de «Archivadas»: negrita, cursiva, subrayado, tachado, color de texto, resaltado, alineación y «Quitar formato», aplicados a las celdas seleccionadas (texto, número, fórmula y resumen). Al arrastrar una columna no se selecciona texto y una etiqueta con su nombre sigue al ratón. «Duplicar tabla» cierra la tabla en edición para ver las dos. Copiar y pegar lleva solo el texto.
 
 **En la app (mejora 1.1.0) · vista Tabla como hoja de cálculo.** Un clic selecciona una celda; doble clic, F2 o escribir la editan (los menús de estado, selección, etiquetas, fecha, relación e imágenes se abren con doble clic o F2). Flechas, Mayús o arrastrar para elegir un rango, Ctrl+A para toda la tabla, Ctrl+C / X / V para copiar, cortar y pegar rangos con texto separado por tabuladores (cada texto se convierte al tipo de su columna; si se pegan más filas, se añaden), Supr para vaciar, y sugerencias de autocompletado con las palabras de la misma columna en las columnas de texto.
 
@@ -473,6 +476,7 @@ Opcional y desactivado por defecto. Se configura en Ajustes → Seguridad.
   - Esc cierra ventanas y menús.
   - Ctrl+B y Ctrl+I dan negrita y cursiva en las notas.
   - Tab y Mayús+Tab crean o deshacen subtareas en los checklists.
+  - **En la app** (mejora 1.1.0): Alt+↑ / Alt+↓ mueven la tarea seleccionada en la barra lateral, que también admite arrastrar tareas entre carpetas; cada tarea puede tener su propio icono.
   - ↑↓ y Enter funcionan en la búsqueda; en la Tabla PM se navega con el teclado.
 
 ## 17. Datos de ejemplo de la maqueta

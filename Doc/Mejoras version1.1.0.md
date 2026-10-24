@@ -101,7 +101,7 @@ La tarjeta Tabla se comporta como Excel. Las cabeceras cuentan como la fila supe
 - **Copiar, cortar y pegar:** Ctrl+C / X / V con texto separado por tabuladores (el formato de Excel, Calc y Google Sheets), con comillas y saltos de línea dentro de una celda. Una sola celda copiada rellena el rango elegido. Al pegar, la tabla crece con las filas y columnas que falten. Un pegado, un corte o un Supr son un solo paso de deshacer (acción nueva `tableSetRange`).
 - **Autocompletado:** al escribir aparecen, bajo la celda, valores y palabras de esa columna que empiezan igual (sin distinguir mayúsculas ni tildes). ↓/↑ eligen, Enter o Tab aceptan, o clic.
 - Supr / Retroceso vacían lo seleccionado. Ctrl+Z y Ctrl+Y funcionan sin salir de la tabla.
-- Aún no están: las operaciones matemáticas (Fase 4) y la barra de formato (Fase 5).
+- Aún no están: las operaciones matemáticas (Fase 4) y la barra de formato (hecha, ver 11).
 - Archivos: `lib/grid.ts` (motor sin interfaz), `components/cards/TableBody.tsx`, `lib/store.ts`. Pruebas: `grid.test.ts` y `tablegrid.test.tsx`. Una prueba antigua (`app.test.tsx`) lee ahora el texto de la celda, no el valor de un cuadro de texto.
 
 ## 8 · Tabla PM como hoja de cálculo (Fase 3b)
@@ -117,8 +117,41 @@ Mismo motor que la Tabla (`lib/grid.ts`), aplicado a las celdas de la Tabla PM d
 - La página de fila no cambia: sus campos se editan directamente.
 - Archivos: `views/PmTable.tsx`, `lib/pmgrid.ts`, `lib/pm.ts` (`batch`). Pruebas: `pmgrid.test.tsx`, `pmgrid.test.ts`. Cuatro pruebas antiguas se adaptaron al nuevo gesto (doble clic para abrir menús; leer el texto de la celda).
 - Los totales, filtros, orden, agrupación y paginación funcionan igual; las posiciones de la selección son las de las filas que se ven.
-- Aún no están: las fórmulas con referencias (Fase 4) y la barra de formato (Fase 5).
+- Aún no están: las fórmulas con referencias (Fase 4) y la barra de formato (hecha, ver 11).
 
-## Comprobación de la Fase 1
+## 9 · Detalles de pulido
 
-En la nube: `npx tsc --noEmit` sin errores, 166 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.
+**Fecha:** 24 de octubre de 2026
+
+- **Selector de color más grande:** ahora mide 680 px de ancho, con campos y cifras mayores para ver bien los 6 parámetros (H, S, B, R, G, B).
+- **Vista previa de la Tabla PM:** muestra una fila de cabecera con el nombre de cada columna.
+- **Arrastrar una columna** (Tabla PM) ya no selecciona texto: las cabeceras no se seleccionan, el cursor es una mano y una etiqueta con el nombre acompaña al ratón.
+- **Duplicar la tabla PM** en edición la cierra, igual que la «x» o Esc, para ver las dos tablas de inmediato.
+- Archivos: `views/PmTable.tsx`, `components/cards/PmBody.tsx`, `styles/app.css`. Pruebas: `pmdrag.test.tsx`, `mejoras110.test.tsx`.
+
+## 10 · Mover tareas e iconos por tarea (Fase 6)
+
+- **Arrastrar tareas** en la barra lateral: dentro de una carpeta, entre carpetas y hacia dentro de una carpeta (línea de inserción arriba/abajo o resaltado de la carpeta). Un clic tras arrastrar no abre la tarea.
+- **Alt+↑ / Alt+↓** suben o bajan la tarea seleccionada en su carpeta.
+- **Icono por tarea:** botón en cada tarea que abre un menú con los 53 iconos y «Punto de color» (el valor por defecto). Campo nuevo `Project.icon`.
+- Acción nueva `moveProject` en `lib/store.ts` (renumera posiciones y guarda solo los documentos cambiados).
+- Archivos: `components/Sidebar.tsx`, `lib/store.ts`, `lib/model.ts`. Pruebas: `sidebar6.test.tsx`.
+
+## 11 · Barra de formato (Fase 5)
+
+Formato por elemento (no Markdown), excepto la Nota, que sigue en Markdown.
+
+- **Contenido:** negrita, cursiva, subrayado, tachado, color de texto, resaltado (con el selector libre), alineación (solo tablas) y «Quitar formato».
+- **Checklist:** formato por tarea seleccionada. **Tabla:** por celda o rango, y por cabecera. **Tabla PM:** barra a la izquierda de «Archivadas» (vista Tabla; celdas de texto, número, fórmula y resumen). **Nota:** la mini barra es siempre visible, también en modo vista (al usarla entra en edición).
+- Copiar y pegar lleva solo el texto, no el formato. Deshacer lo revierte en un paso.
+- Datos: `CheckItem.fmt`, `TableRow.fmt`, `TableCard.headFmt`, `Row.fmt`; acciones `checkFormat`, `tableFormat` y operación `format`.
+- Archivos: `lib/format.ts`, `components/FormatBar.tsx`, `CheckBody.tsx`, `TableBody.tsx`, `PmTable.tsx`, `NoteBody.tsx`. Pruebas: `format.test.ts`, `format5.test.tsx`.
+
+## Pendiente
+
+- **Fase 4:** fórmulas con referencias tipo Excel entre columnas, ventana que explica el error, y fórmula viva anclada a la fila en la Tabla PM.
+- Para probar en tu PC (`npm run tauri dev`): selector ancho, cabecera en la vista previa PM, arrastre de columnas sin selección, duplicar tabla, arrastre y Alt+flechas en la barra lateral, iconos por tarea y las barras de formato.
+
+## Comprobación
+
+En la nube: `npx tsc --noEmit` sin errores, 178 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.
