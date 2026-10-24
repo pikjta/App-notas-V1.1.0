@@ -111,7 +111,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 
 **Nota.** Texto en Markdown con barra de formato y enlaces `[[ ]]` (ver apartado 5). Si está vacía: «Nota vacía. Haz clic para escribir en Markdown.».
 
-**Tabla.** Tabla simple con cabeceras editables, «Añadir columna», «Eliminar columna», celdas editables, «+ Nueva fila» y «Eliminar fila». **En la app** (mejora 1.1.0) la tabla se maneja como una hoja de cálculo: clic selecciona, doble clic o escribir edita, las flechas se mueven (Mayús o arrastrar amplían el rango), Ctrl+A elige toda la tabla, Ctrl+C / X / V copian, cortan y pegan rangos (texto con tabuladores, compatible con Excel; la tabla crece al pegar) y al escribir se sugieren palabras de la misma columna.
+**Tabla.** Tabla simple con cabeceras editables, «Añadir columna», «Eliminar columna», celdas editables, «+ Nueva fila» y «Eliminar fila». **En la app** (mejora 1.1.0) la tabla se maneja como una hoja de cálculo: clic selecciona, doble clic o escribir edita, las flechas se mueven (Mayús o arrastrar amplían el rango), Ctrl+A elige toda la tabla, Ctrl+C / X / V copian, cortan y pegan rangos (texto con tabuladores, compatible con Excel; la tabla crece al pegar) y al escribir se sugieren palabras de la misma columna. Una celda que empieza por «=» es una fórmula (`=B2*C2`, `=suma(D2:D9)`; A1 es la cabecera de la primera columna): se ve el resultado, una barra superior muestra la celda activa y su contenido, y un error abre una ventana que lo explica.
 
 **Tabla PM.**
 
@@ -213,6 +213,7 @@ Las plantillas propias aparecen con la etiqueta «TUYA» y se pueden eliminar.
 - Funciones: if, round, concat, dateBetween, dateAdd, today, min, max, contains y formatDate.
 - Operadores: + − × ÷ ( ) > < == and or. Las columnas se guardan por identidad, así que se pueden renombrar sin romper la fórmula.
 - Errores explicados: «Referencia circular entre fórmulas», «Función desconocida»…
+- **En la app** (mejora 1.1.0): referencias tipo Excel. `B2` es la celda de la columna B y la fila 2 (cada cabecera muestra su letra y la columna de agarre el número de fila); `B2:C9` y `B:B` son rangos que se usan en funciones como `suma`, `promedio`, `contar`, `min` y `max` (también existen `si`, `redondear`, `concatenar`, `hoy`…, con argumentos separados por coma o punto y coma); `{B}` es la columna B de la misma fila. La referencia se guarda por identidad de fila y columna, así que sigue apuntando a la misma celda al reordenar, ordenar o filtrar; si se borra, aparece `#REF`. Una celda con error muestra «⚠ Error» y, al hacer clic, una ventana explica qué pasó y cómo arreglarlo.
 
 **Relación y Resumen.**
 

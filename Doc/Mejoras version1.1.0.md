@@ -117,7 +117,7 @@ Mismo motor que la Tabla (`lib/grid.ts`), aplicado a las celdas de la Tabla PM d
 - La página de fila no cambia: sus campos se editan directamente.
 - Archivos: `views/PmTable.tsx`, `lib/pmgrid.ts`, `lib/pm.ts` (`batch`). Pruebas: `pmgrid.test.tsx`, `pmgrid.test.ts`. Cuatro pruebas antiguas se adaptaron al nuevo gesto (doble clic para abrir menús; leer el texto de la celda).
 - Los totales, filtros, orden, agrupación y paginación funcionan igual; las posiciones de la selección son las de las filas que se ven.
-- Aún no están: las fórmulas con referencias (Fase 4) y la barra de formato (hecha, ver 11).
+- Las fórmulas con referencias están hechas (ver 12) y la barra de formato (hecha, ver 11).
 
 ## 9 · Detalles de pulido
 
@@ -147,11 +147,24 @@ Formato por elemento (no Markdown), excepto la Nota, que sigue en Markdown.
 - Datos: `CheckItem.fmt`, `TableRow.fmt`, `TableCard.headFmt`, `Row.fmt`; acciones `checkFormat`, `tableFormat` y operación `format`.
 - Archivos: `lib/format.ts`, `components/FormatBar.tsx`, `CheckBody.tsx`, `TableBody.tsx`, `PmTable.tsx`, `NoteBody.tsx`. Pruebas: `format.test.ts`, `format5.test.tsx`.
 
+## 12 · Fórmulas con referencias tipo Excel (Fase 4)
+
+**Fecha:** 24 de octubre de 2026
+
+Mismo lenguaje de fórmulas en la Tabla PM y en la tarjeta Tabla (`lib/formula.ts`).
+
+- **Referencias:** `B2` (columna B, fila 2), rangos `B2:C9` y columnas enteras `B:B` o `B:D`. Los rangos se usan dentro de funciones: `suma(B2:B9)`, `promedio`, `contar`, `min`, `max`. En las funciones numéricas el texto y las celdas vacías del rango se ignoran, como en Excel.
+- **Funciones en español:** `si`, `suma`, `promedio`, `contar`, `redondear`, `concatenar`, `hoy`, `maximo`, `minimo`, `largo`, `mayus`, `minus` (las inglesas siguen funcionando). Los argumentos se separan con coma o con punto y coma.
+- **Tarjeta Tabla:** una celda que empieza por «=» es una fórmula (`=B2*C2`, `=suma(D2:D9)`). A1 es la cabecera de la primera columna; los datos empiezan en la fila 2. Se ve el resultado y, al editar, el texto. Encima de la tabla hay una barra con el nombre de la celda activa y su contenido, y al trabajar en la tabla cada celda muestra su nombre (A1, B2…) en una esquina. Copiar y pegar lleva el texto de la fórmula (las referencias no se desplazan al pegar). Funciones: archivos `lib/tablecalc.ts` y `components/cards/TableBody.tsx`.
+- **Tabla PM:** cada columna de tipo Fórmula se calcula en todas las filas. `B2` se escribe con letras y números, pero se **guarda por identidad** (`{#id-columna:id-fila}`): al reordenar filas o columnas, ordenar o filtrar, la fórmula sigue apuntando a la misma celda, y al abrir el editor se vuelve a ver con las letras y números de ese momento. Si se borra la fila o la columna, se muestra `#REF` y el error lo explica. Las cabeceras muestran su letra (esquina superior izquierda) y la columna de agarre el número de fila (el orden de la tabla, sin contar filtros ni orden de la vista). `{B}` es el valor de la columna B en la misma fila, y `{Nombre}` sigue funcionando como antes.
+- **Ventana de error:** una celda con error muestra «⚠ Error»; al hacer clic se abre una ventana con qué pasó, por qué y cómo arreglarlo (círculo, celda que no existe, división entre cero, texto en una cuenta, función desconocida, fórmula mal escrita…), con la fórmula, la celda y el mensaje exacto. Esc la cierra sin cerrar la tabla. En la Tabla hay además «Editar la fórmula».
+- Archivos nuevos: `lib/tablecalc.ts`, `components/FormulaErrorDialog.tsx`; cambios en `lib/formula.ts`, `lib/pm.ts` (`storeExpr`, `displayExpr`, `colLetter`, `rowNumber`), `views/PmTable.tsx`, `components/cards/TableBody.tsx`, `styles/app.css`. Pruebas: `phase4.test.ts` y `formula4.test.tsx`.
+- Decisiones donde la especificación no decía nada: el número de fila de la Tabla PM sigue el orden de los datos (así no cambia con filtros ni orden); al pegar en la Tabla las referencias no se desplazan; una fórmula de la Tabla no puede usar `{Nombre}`.
+
 ## Pendiente
 
-- **Fase 4:** fórmulas con referencias tipo Excel entre columnas, ventana que explica el error, y fórmula viva anclada a la fila en la Tabla PM.
-- Para probar en tu PC (`npm run tauri dev`): selector ancho, cabecera en la vista previa PM, arrastre de columnas sin selección, duplicar tabla, arrastre y Alt+flechas en la barra lateral, iconos por tarea y las barras de formato.
+- Probar en tu PC (`npm run tauri dev`): fórmulas en la Tabla y en la Tabla PM, ventana de error, letras en las cabeceras.
 
 ## Comprobación
 
-En la nube: `npx tsc --noEmit` sin errores, 178 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.
+En la nube: `npx tsc --noEmit` sin errores, 189 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.
