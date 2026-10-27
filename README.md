@@ -160,6 +160,9 @@ Cada copia se escribe primero en un archivo temporal para que nunca quede a medi
 | ⇧⌘Z / Ctrl+Y | Rehacer |
 | ⌘B, ⌘I | Negrita y cursiva en una nota |
 | Enter, Tab, ⇧Tab | En una checklist: nueva tarea, sangrar, quitar sangría |
+| Alt+↑ / Alt+↓ | Sube o baja la tarea seleccionada en la barra lateral |
+| Flechas, ⇧+flechas, F2, Ctrl+A/C/X/V | En las tablas: moverse, seleccionar, editar y copiar/pegar como en Excel |
+| `=` al inicio de una celda | Fórmula (`=SUMA(A2:A9)`, `=B2*C3`) en Tabla y Tabla PM |
 | `[[` en una nota | Selector para enlazar una tarea principal o una tarjeta |
 
 ## Documentación del proyecto
