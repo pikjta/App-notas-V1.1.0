@@ -16,6 +16,9 @@ export const isSingle = (s: Sel) => s.a.r === s.b.r && s.a.c === s.b.c;
 export const allOf = (d: Dims): Sel => ({ a: { r: d.minRow, c: 0 }, b: { r: d.rows - 1, c: d.cols - 1 } });
 export const isAll = (s: Sel, d: Dims) => { const rc = rectOf(s); return rc.r0 <= d.minRow && rc.c0 <= 0 && rc.r1 >= d.rows - 1 && rc.c1 >= d.cols - 1; };
 
+/** Marca que acompaña al texto copiado cuando incluye las cabeceras (la primera línea son nombres de columna). */
+export const GRID_MIME = 'application/x-cuaderno-grid';
+
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
 /** Nueva posición tras pulsar una flecha (Ctrl/⌘ salta al borde); se queda dentro de la tabla. */

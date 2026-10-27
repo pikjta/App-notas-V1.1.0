@@ -23,7 +23,7 @@ export function eraseAt(strokes: Stroke[], q: [number, number]): Stroke[] {
  * Colores principales de una imagen a partir de sus píxeles RGBA: agrupa colores parecidos,
  * favorece los más frecuentes y saturados, y elige `max` que se distingan bien entre sí.
  */
-export function paletteFromPixels(data: ArrayLike<number>, max = 6): string[] {
+export function paletteFromPixels(data: ArrayLike<number>, max = 8): string[] {
   const buckets = new Map<string, { n: number; r: number; g: number; b: number }>();
   for (let i = 0; i + 3 < data.length; i += 4) {
     if (data[i + 3] < 128) continue;

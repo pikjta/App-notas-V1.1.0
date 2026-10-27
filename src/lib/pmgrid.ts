@@ -1,5 +1,5 @@
 import type { CellVal, Col, Opt, Pm, Row } from './pm';
-import { allStates, optsOf } from './pm';
+import { allStates, optsOf, toCellFormula } from './pm';
 import { exportValue, parseDateRange, parseNumber } from './pmio';
 
 const fold = (t: string) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -16,8 +16,10 @@ export const copyValue = (pm: Pm, col: Col, row: Row, tags: Opt[]) => exportValu
  * Valor que corresponde a un texto pegado en una columna, o `null` si no se puede aplicar
  * (columna calculada, opción que no existe, número o fecha ilegible): esa celda se deja como estaba.
  */
-export function pasteValue(col: Col, raw: string, tags: Opt[]): { value: CellVal } | null {
+export function pasteValue(col: Col, raw: string, tags: Opt[], pm?: Pm): { value: CellVal } | null {
   const t = raw.trim();
+  // Un texto que empieza por «=» es una fórmula (solo en columnas de texto y número).
+  if (pm && (col.type === 'text' || col.type === 'number') && t.startsWith('=')) return { value: toCellFormula(pm, t) };
   switch (col.type) {
     case 'text': return { value: raw };
     case 'number': { if (!t) return { value: null }; const n = parseNumber(t); return n === null ? null : { value: n }; }

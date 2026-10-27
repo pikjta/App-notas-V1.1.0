@@ -32,7 +32,7 @@ export function readImage(file: File): Promise<{ mime: string; data: string }> {
 }
 
 /** Colores principales de una imagen (data URL). */
-export function extractPalette(dataUrl: string, max = 6): Promise<string[]> {
+export function extractPalette(dataUrl: string, max = 8): Promise<string[]> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {

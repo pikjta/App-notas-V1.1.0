@@ -56,7 +56,7 @@ function tokenize(src: string): Tok[] {
       out.push({ t: 'id', v: src.slice(i, j), at: i, end: j }); i = j; continue;
     }
     const two = src.slice(i, i + 2);
-    if (['==', '!=', '>=', '<=', '&&', '||'].includes(two)) { out.push({ t: 'op', v: two, at: i, end: i + 2 }); i += 2; continue; }
+    if (['==', '!=', '>=', '<=', '&&', '||', '<>'].includes(two)) { out.push({ t: 'op', v: two === '<>' ? '!=' : two, at: i, end: i + 2 }); i += 2; continue; }
     if ('+-*/%<>=!'.includes(c)) { out.push({ t: 'op', v: c === '=' ? '==' : c, at: i, end: i + 1 }); i++; continue; }
     if (c === '(' || c === ')' || c === ',' || c === ':') { out.push({ t: c, v: c, at: i, end: i + 1 }); i++; continue; }
     if (c === ';') { out.push({ t: ',', v: ',', at: i, end: i + 1 }); i++; continue; }
@@ -71,7 +71,7 @@ const typedRef = (v: string): Ref => { const m = v.match(/^([A-Za-z]+)([0-9]+)$/
 const idRef = (v: string): Ref | null => { const m = v.match(/^#([^:]+):(.+)$/); return m ? { k: 'id', c: m[1], r: m[2] } : null; };
 
 /** Nombres en español de las funciones (se aceptan igual que los ingleses). */
-const ALIAS: Record<string, string> = { si: 'if', suma: 'sum', promedio: 'avg', contar: 'count', redondear: 'round', concatenar: 'concat', hoy: 'today', maximo: 'max', minimo: 'min', máximo: 'max', mínimo: 'min', largo: 'length', mayus: 'upper', minus: 'lower' };
+const ALIAS: Record<string, string> = { y: 'and', o: 'or', no: 'not', raiz: 'sqrt', potencia: 'pow', residuo: 'mod', entero: 'floor', techo: 'ceil', mayusc: 'upper', minusc: 'lower', contara: 'counta', esblanco: 'empty', si: 'if', suma: 'sum', promedio: 'avg', contar: 'count', redondear: 'round', concatenar: 'concat', hoy: 'today', maximo: 'max', minimo: 'min', máximo: 'max', mínimo: 'min', largo: 'length', mayus: 'upper', minus: 'lower' };
 
 function parse(src: string): Node {
   const toks = tokenize(src);
@@ -162,6 +162,13 @@ const FNS: Record<string, (a: FVal[], today: string) => FVal> = {
   sum: (a) => a.reduce<number>((m, x) => m + num(x, 'sum'), 0),
   avg: (a) => (a.length ? a.reduce<number>((m, x) => m + num(x, 'avg'), 0) / a.length : 0),
   count: (a) => a.filter((x) => typeof x === 'number' || (typeof x === 'string' && x.trim() !== '' && !isNaN(Number(x.replace(',', '.'))))).length,
+  counta: (a) => a.filter((x) => x !== null && x !== '').length,
+  and: (a) => a.every(truthy),
+  or: (a) => a.some(truthy),
+  not: (a) => !truthy(a[0]),
+  sqrt: (a) => { const n = num(a[0], 'raiz'); if (n < 0) throw new FormulaError('raiz: no existe la raíz de un número negativo.'); return Math.sqrt(n); },
+  pow: (a) => num(a[0], 'potencia') ** num(a[1], 'potencia'),
+  mod: (a) => { const d = num(a[1], 'residuo'); if (d === 0) throw new FormulaError('División entre cero.'); return num(a[0], 'residuo') % d; },
   concat: (a) => a.map(str).join(''),
   length: (a) => str(a[0]).length,
   upper: (a) => str(a[0]).toUpperCase(),
@@ -185,7 +192,7 @@ const FNS: Record<string, (a: FVal[], today: string) => FVal> = {
   },
 };
 
-export const FUNCTION_HELP = 'Celdas: B2 · rangos: B2:B9 · columna entera: B:B (también suma(B2:B9), promedio, contar, si, redondear…) · if(cond, a, b) · round(x, n) · floor · ceil · abs · min · max · sum · avg · concat(…) · length · upper · lower · contains(texto, parte) · empty · toNumber · today() · dateBetween(a, b, "days"|"weeks"|"months") · dateAdd(fecha, n, "days")';
+export const FUNCTION_HELP = 'Funciones: SUMA · PROMEDIO · CONTAR · CONTARA · MAX · MIN · SI · Y · O · NO · REDONDEAR · ABS · ENTERO · RAIZ · POTENCIA · RESIDUO · HOY · CONCATENAR · MAYUSC · MINUSC · LARGO. Celdas: B2 · rangos: B2:B9 · columna entera: B:B. Con propiedades: if(cond, a, b) · round(x, n) · floor · ceil · abs · min · max · sum · avg · concat(…) · length · upper · lower · contains(texto, parte) · empty · toNumber · today() · dateBetween(a, b, "days"|"weeks"|"months") · dateAdd(fecha, n, "days")';
 
 /** Cómo se leen las propiedades por nombre y las celdas por referencia. */
 export type Env = { get: (name: string) => FVal; cell?: (r: Ref) => FVal; range?: (a: Ref, b: Ref) => FVal[] };

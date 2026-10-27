@@ -201,6 +201,8 @@ export const formatDate = (v: DateVal) => (v.start ? fmtDay(v.start) + (v.end &&
 /** Texto de una celda (para buscar, filtrar, convertir de tipo o exportar). */
 export function cellText(pm: Pm, col: Col, row: Row, tags: Opt[]): string {
   const v = row.cells[col.id];
+  const cf = cellFormula(pm, col, row, tags);
+  if (cf) return cf.error ? '' : formatFVal(col, cf.value);
   switch (col.type) {
     case 'progress': return progress(pm, col, row) + '%';
     case 'checkbox': return v ? 'Sí' : '';
@@ -243,8 +245,8 @@ export function matches(pm: Pm, row: Row, f: Filter, tags: Opt[], today: string)
   const col = pm.cols.find((c) => c.id === f.col);
   if (!col) return true;
   const v = row.cells[col.id];
-  const isEmpty = col.type === 'formula' || col.type === 'rollup' ? cellText(pm, col, row, tags) === '' : col.type === 'timer' ? !timerMs(v) : v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !(v as DateVal).start);
-  const num = col.type === 'formula' || col.type === 'rollup' ? numValue(pm, col, row, tags) ?? NaN : col.type === 'progress' ? progress(pm, col, row) : col.type === 'timer' ? timerMs(v) / 3_600_000 : typeof v === 'number' ? v : NaN;
+  const isEmpty = col.type === 'formula' || col.type === 'rollup' || isCellFormula(col, v) ? cellText(pm, col, row, tags) === '' : col.type === 'timer' ? !timerMs(v) : v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !(v as DateVal).start);
+  const num = col.type === 'formula' || col.type === 'rollup' || isCellFormula(col, v) ? numValue(pm, col, row, tags) ?? NaN : col.type === 'progress' ? progress(pm, col, row) : col.type === 'timer' ? timerMs(v) / 3_600_000 : typeof v === 'number' ? v : NaN;
   const d = col.type === 'date' && v && typeof v === 'object' && !Array.isArray(v) ? (v as DateVal) : null;
   switch (f.op) {
     case 'empty': return isEmpty;
@@ -278,7 +280,7 @@ export function visibleRows(pm: Pm, tags: Opt[], today: string, query = ''): Row
   if (sorts.length) {
     const keyOf = (col: Col, r: Row): number | string => {
       const v = r.cells[col.id];
-      if (col.type === 'number') return typeof v === 'number' ? v : -Infinity;
+      if (col.type === 'number') { const n = numValue(pm, col, r, tags); return n ?? -Infinity; }
       if (col.type === 'formula' || col.type === 'rollup') { const n = numValue(pm, col, r, tags); if (n !== null) return n; }
       if (col.type === 'progress') return progress(pm, col, r);
       if (col.type === 'checkbox') return v ? 1 : 0;
@@ -338,7 +340,7 @@ export function total(pm: Pm, col: Col, rows: Row[], tags: Opt[], today: string)
     const x = fn === 'sum' ? ms.reduce((a, b) => a + b, 0) : fn === 'avg' ? ms.reduce((a, b) => a + b, 0) / ms.length : Math.max(...ms);
     return formatTimer(x);
   }
-  const nums = rows.map((r) => (col.type === 'progress' ? progress(pm, col, r) : col.type === 'formula' || col.type === 'rollup' ? numValue(pm, col, r, tags) : r.cells[col.id])).filter((x): x is number => typeof x === 'number');
+  const nums = rows.map((r) => (col.type === 'progress' ? progress(pm, col, r) : col.type === 'formula' || col.type === 'rollup' || col.type === 'number' ? numValue(pm, col, r, tags) : r.cells[col.id])).filter((x): x is number => typeof x === 'number');
   if (!nums.length) return '—';
   const x = fn === 'sum' ? nums.reduce((a, b) => a + b, 0) : fn === 'avg' ? nums.reduce((a, b) => a + b, 0) / nums.length : fn === 'min' ? Math.min(...nums) : Math.max(...nums);
   return col.type === 'progress' || (col.type === 'rollup' && col.fn === 'pctDone') ? Math.round(x) + '%' : formatNum(col, x);
@@ -846,6 +848,8 @@ function rollupText(pm: Pm, col: Col, row: Row, _tags: Opt[]): string {
 export function numValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth = 0): number | null {
   if (depth > 8) return null;
   const v = row.cells[col.id];
+  const cf = cellFormula(pm, col, row, tags, depth);
+  if (cf) return typeof cf.value === 'number' ? cf.value : typeof cf.value === 'boolean' ? Number(cf.value) : null;
   switch (col.type) {
     case 'number': return typeof v === 'number' ? v : null;
     case 'progress': return progress(pm, col, row);
@@ -861,6 +865,8 @@ export function numValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth = 0): nu
 /** Valor de una propiedad tal como lo ve una fórmula. */
 function propValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth: number): FVal {
   const v = row.cells[col.id];
+  const cf = cellFormula(pm, col, row, tags, depth);
+  if (cf) { if (cf.error) throw new Error(cf.error); return cf.value; }
   switch (col.type) {
     case 'number': case 'progress': case 'timer': case 'rollup': case 'relation': return col.type === 'rollup' && col.fn === 'list' ? rollupText(pm, col, row, tags) : numValue(pm, col, row, tags, depth);
     case 'checkbox': return !!v;
@@ -875,18 +881,23 @@ const fold2 = (t: string) => t.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
 /** Letra de la columna (A, B… Z, AA…) según su posición en la tabla. */
 export function colLetter(i: number): string { let n = i + 1, s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 const letterIndex = (l: string) => l.toUpperCase().split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
-/** Número de fila (1, 2, 3…) según el orden de la tabla, sin contar filtros ni orden de la vista. */
-export const rowNumber = (pm: Pm, id: string) => pm.rows.findIndex((r) => r.id === id) + 1;
+/**
+ * Número de fila como en una hoja de cálculo: la fila 1 son las cabeceras y los datos empiezan en la 2.
+ * Es la posición en la tabla, sin contar filtros ni el orden de la vista.
+ */
+export const rowNumber = (pm: Pm, id: string) => { const i = pm.rows.findIndex((r) => r.id === id); return i < 0 ? 0 : i + 2; };
 
 const NO_CELL = 'La referencia apunta a una celda que ya no existe (se borró su fila o su columna).';
-/** Columna y fila (o null si es la columna entera) a las que apunta una referencia. */
-function resolveRef(pm: Pm, r: Ref): { col: Col; row: Row | null } {
+type Target = { col: Col; row: Row | null; head: boolean };
+/** Columna y fila a las que apunta una referencia (`row: null` y `head: false` = columna entera). */
+function resolveRef(pm: Pm, r: Ref): Target {
   const col = r.k === 'id' ? pm.cols.find((c) => c.id === r.c) : pm.cols[letterIndex(r.col)];
   if (!col) throw new Error(r.k === 'id' ? NO_CELL : `No existe la columna ${r.col}.`);
-  if (r.k === 'id' ? r.r === '*' : r.row === 0) return { col, row: null };
-  const row = r.k === 'id' ? pm.rows.find((x) => x.id === r.r) : pm.rows[r.row - 1];
-  if (!row) throw new Error(r.k === 'id' ? NO_CELL : `No existe la fila ${r.row}.`);
-  return { col, row };
+  if (r.k === 'id' ? r.r === '*' : r.row === 0) return { col, row: null, head: false };
+  if (r.k === 'id' ? r.r === '^' : r.row === 1) return { col, row: null, head: true };
+  const row = r.k === 'id' ? pm.rows.find((x) => x.id === r.r) : pm.rows[r.row - 2];
+  if (!row) throw new Error(r.k === 'id' ? NO_CELL : `No existe la fila ${r.row}. La tabla llega hasta la fila ${pm.rows.length + 1}.`);
+  return { col, row, head: false };
 }
 
 /** Texto de la fórmula tal como se escribe (B2, B2:B9, B:B) → como se guarda (por id de columna y de fila). */
@@ -896,7 +907,8 @@ export function storeExpr(pm: Pm, text: string): string {
     const col = pm.cols[letterIndex(r.col)];
     if (!col) return null;
     if (r.row === 0) return `{#${col.id}:*}`;
-    const row = pm.rows[r.row - 1];
+    if (r.row === 1) return `{#${col.id}:^}`;
+    const row = pm.rows[r.row - 2];
     return row ? `{#${col.id}:${row.id}}` : null;
   });
 }
@@ -907,13 +919,31 @@ export function displayExpr(pm: Pm, stored: string): string {
     const ci = pm.cols.findIndex((c) => c.id === r.c);
     if (ci < 0) return '#REF';
     if (r.r === '*') return colLetter(ci);
+    if (r.r === '^') return colLetter(ci) + '1';
     const ri = pm.rows.findIndex((x) => x.id === r.r);
-    return ri < 0 ? '#REF' : colLetter(ci) + (ri + 1);
+    return ri < 0 ? '#REF' : colLetter(ci) + (ri + 2);
   });
 }
 
+/** ¿La celda contiene una fórmula escrita al estilo Excel («=SUMA(A2:A9)»)? Solo en columnas de texto y número. */
+export const isCellFormula = (col: Col, v: CellVal | undefined): boolean => (col.type === 'text' || col.type === 'number') && typeof v === 'string' && v.startsWith('=');
+/** La fórmula de una celda como la escribe el usuario (con letras y números). */
+export const formulaText = (pm: Pm, v: string) => '=' + displayExpr(pm, v.slice(1));
+/** Texto escrito por el usuario → lo que se guarda en la celda (la fórmula, por identidad). */
+export const toCellFormula = (pm: Pm, typed: string) => '=' + storeExpr(pm, typed.replace(/^=/, ''));
+
+/** Evalúa la fórmula de una celda (null si la celda no tiene fórmula). */
+export function cellFormula(pm: Pm, col: Col, row: Row, tags: Opt[], depth = 0): { value: FVal; error: string | null } | null {
+  const v = row.cells[col.id];
+  return isCellFormula(col, v) ? evalExpr(pm, (v as string).slice(1), col, row, tags, depth) : null;
+}
+
 export function formulaValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth = 0): { value: FVal; error: string | null } {
-  if (!col.expr?.trim()) return { value: null, error: null };
+  return evalExpr(pm, col.expr ?? '', col, row, tags, depth);
+}
+
+function evalExpr(pm: Pm, expr: string, col: Col, row: Row, tags: Opt[], depth: number): { value: FVal; error: string | null } {
+  if (!expr.trim()) return { value: null, error: null };
   if (depth > 8) return { value: null, error: 'Referencia circular entre fórmulas' };
   try {
     const today = new Date().toISOString().slice(0, 10);
@@ -921,20 +951,35 @@ export function formulaValue(pm: Pm, col: Col, row: Row, tags: Opt[], depth = 0)
       if (c.id === col.id && r.id === row.id) throw new Error('Referencia circular entre fórmulas');
       return propValue(pm, c, r, tags, depth + 1);
     };
-    const value = runFormula(col.expr, (name) => {
+    const value = runFormula(expr, (name) => {
       const c = pm.cols.find((x) => fold2(x.name) === fold2(name)) ?? (/^[A-Za-z]{1,3}$/.test(name.trim()) ? pm.cols[letterIndex(name.trim())] : undefined);
       if (!c) throw new Error(`No hay ninguna propiedad «${name}».`);
-      if (c.id === col.id) throw new Error('Referencia circular entre fórmulas');
-      return propValue(pm, c, row, tags, depth + 1);
+      return read(c, row);
     }, today, {
-      cell: (ref) => { const t = resolveRef(pm, ref); if (!t.row) throw new Error('Una columna entera (como B:B) solo se puede usar dentro de una función, por ejemplo suma(B:B).'); return read(t.col, t.row); },
+      cell: (ref) => {
+        const t = resolveRef(pm, ref);
+        if (t.head) return t.col.name;
+        if (!t.row) throw new Error('Una columna entera (como B:B) solo se puede usar dentro de una función, por ejemplo suma(B:B).');
+        return read(t.col, t.row);
+      },
       range: (a, b) => {
         const A = resolveRef(pm, a), B = resolveRef(pm, b);
         const c0 = Math.min(pm.cols.indexOf(A.col), pm.cols.indexOf(B.col)), c1 = Math.max(pm.cols.indexOf(A.col), pm.cols.indexOf(B.col));
-        const whole = !A.row || !B.row;
-        const r0 = whole ? 0 : Math.min(pm.rows.indexOf(A.row!), pm.rows.indexOf(B.row!)), r1 = whole ? pm.rows.length - 1 : Math.max(pm.rows.indexOf(A.row!), pm.rows.indexOf(B.row!));
+        // Índice de fila: -1 = cabecera; una columna entera abarca todas las filas.
+        const whole = (t: Target) => !t.row && !t.head;
+        const ix = (t: Target) => (t.head ? -1 : pm.rows.indexOf(t.row!));
+        const all = whole(A) || whole(B);
+        const r0 = all ? -1 : Math.min(ix(A), ix(B)), r1 = all ? pm.rows.length - 1 : Math.max(ix(A), ix(B));
         const out: FVal[] = [];
-        for (let ri = r0; ri <= r1; ri++) { const r = pm.rows[ri]; if (r.archived) continue; for (let ci = c0; ci <= c1; ci++) { const c = pm.cols[ci]; if (c.id === col.id && r.id === row.id) throw new Error('Referencia circular entre fórmulas'); out.push(read(c, r)); } }
+        for (let ri = r0; ri <= r1; ri++) {
+          for (let ci = c0; ci <= c1; ci++) {
+            const c = pm.cols[ci];
+            if (ri < 0) { out.push(c.name); continue; }
+            const r = pm.rows[ri];
+            if (r.archived) continue;
+            out.push(read(c, r));
+          }
+        }
         return out;
       },
     });

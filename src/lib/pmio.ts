@@ -1,5 +1,5 @@
 // Tabla PM: exportar e importar CSV, copiar para Excel y plantillas. Funciones puras.
-import { allStates, cellText, COLOR_KEYS, optsOf, pmId, pmTemplate, progress } from './pm';
+import { allStates, cellText, COLOR_KEYS, numValue, optsOf, pmId, pmTemplate, progress } from './pm';
 import type { CellVal, Col, ColType, DateVal, Opt, Phase, Pm, Row } from './pm';
 
 const fold = (t: string) => t.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
@@ -16,7 +16,7 @@ const dmy = (iso: string) => { const [y, m, d] = iso.split('-'); return `${d}/${
 export function exportValue(pm: Pm, col: Col, row: Row, tags: Opt[], decimalComma: boolean): string {
   const v = row.cells[col.id];
   const num = (n: number) => (decimalComma ? String(n).replace('.', ',') : String(n));
-  if (col.type === 'number') return typeof v === 'number' ? num(v) : '';
+  if (col.type === 'number') { if (typeof v === 'string') { const n = numValue(pm, col, row, tags); return n === null ? '' : num(n); } return typeof v === 'number' ? num(v) : ''; }
   if (col.type === 'progress') return String(progress(pm, col, row));
   if (col.type === 'checkbox') return v ? 'Sí' : 'No';
   if (col.type === 'date') { const d = v && typeof v === 'object' && !Array.isArray(v) ? (v as DateVal) : null; return d?.start ? dmy(d.start) + (d.end && d.end !== d.start ? ' - ' + dmy(d.end) : '') : ''; }
