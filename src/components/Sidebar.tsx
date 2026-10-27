@@ -8,7 +8,7 @@ import { todayKey } from '../lib/store';
 import { DEFAULT_SESSION_FONT, fontCss, normalizeFont, normalizeSide, sideVars } from '../lib/appearance';
 import { FontPanel, SidePanel } from './Appearance';
 import { Icon } from './Icon';
-import { hasIcon, ICON_KEYS, iconLabel, viewIconOf } from '../lib/icons';
+import { hasIcon, viewIconOf } from '../lib/icons';
 import type { ViewIconId } from '../lib/icons';
 
 export function Sidebar() {
@@ -19,7 +19,6 @@ export function Sidebar() {
   const [folderName, setFolderName] = useState('');
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [moveMenu, setMoveMenu] = useState<string | null>(null);
-  const [iconMenu, setIconMenu] = useState<string | null>(null);
   const refocus = useRef<string | null>(null);
   const [renamingSession, setRenamingSession] = useState(false);
   const [fontOpen, setFontOpen] = useState(false);
@@ -145,18 +144,6 @@ export function Sidebar() {
           {st.total > 0 && <span className="side-count" title={`${st.done} de ${st.total} hechas`}>{st.done}/{st.total}</span>}
         </button>
         <span className="row-actions">
-          <span className="menu-anchor">
-            <button className="icon-btn small" title="Icono de la tarea" aria-label="Icono de la tarea" aria-expanded={iconMenu === p.id} onClick={() => setIconMenu(iconMenu === p.id ? null : p.id)}><Icon name={p.icon && hasIcon(p.icon) ? p.icon : 'palette'} size={14} /></button>
-            {iconMenu === p.id && (
-              <div className="menu move-menu icon-menu" role="menu" aria-label="Icono de la tarea" onMouseLeave={() => setIconMenu(null)}>
-                <span className="menu-label">Icono</span>
-                <div className="icon-grid">
-                  {ICON_KEYS.map((k) => <button key={k} role="menuitem" className={'icon-cell' + (p.icon === k ? ' on' : '')} title={iconLabel(k)} aria-label={iconLabel(k)} onClick={() => { dispatch({ t: 'patchProject', id: p.id, patch: { icon: k } }); setIconMenu(null); }}><Icon name={k} size={18} /></button>)}
-                </div>
-                <button role="menuitem" className={!p.icon ? 'on' : ''} onClick={() => { dispatch({ t: 'patchProject', id: p.id, patch: { icon: null } }); setIconMenu(null); }}>Punto de color</button>
-              </div>
-            )}
-          </span>
           <span className="menu-anchor">
             <button className="icon-btn small" title="Mover a una carpeta" aria-label="Mover a una carpeta" aria-expanded={moveMenu === p.id} onClick={() => setMoveMenu(moveMenu === p.id ? null : p.id)}><Icon name="folder" size={14} /></button>
             {moveMenu === p.id && (

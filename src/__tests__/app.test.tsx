@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { pressNote, typeNote } from './noteutil';
 import App from '../App';
 
 describe('app (navegador, puente en memoria)', () => {
@@ -19,13 +20,17 @@ describe('app (navegador, puente en memoria)', () => {
     // Nota con Markdown y tarea marcable
     await user.click(screen.getByText('+ Añadir tarjeta'));
     await user.click(screen.getByRole('menuitem', { name: 'Nota' }));
-    await user.click(screen.getByText('Nota vacía. Haz clic para escribir en Markdown.'));
-    const ta = screen.getByLabelText('Contenido de la nota (Markdown)');
-    await user.type(ta, '## Brief{Enter}- [[ ] Medir la pared');
-    await act(async () => { (ta as HTMLTextAreaElement).blur(); });
-    expect(await screen.findByRole('heading', { name: 'Brief' })).toBeTruthy();
-    await user.click(screen.getByRole('checkbox'));
-    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
+    const ed = screen.getByRole('textbox', { name: 'Contenido de la nota' });
+    expect(ed.getAttribute('data-ph')).toContain('Nota vacía');
+    typeNote(ed, 'Brief');
+    await user.click(screen.getAllByRole('button', { name: 'Título' }).slice(-1)[0]);
+    pressNote(ed, 'Enter');
+    await user.click(screen.getAllByRole('button', { name: 'Casilla de tarea' }).slice(-1)[0]);
+    typeNote(ed, 'Medir la pared');
+    expect(ed.querySelector('[data-k="h2"]')!.textContent).toBe('Brief');
+    expect(ed.textContent).not.toMatch(/[#\[\]]/); // sin sintaxis Markdown a la vista
+    await user.click(ed.querySelector('.rn-mark[data-mark="task"]')!);
+    expect(ed.querySelector('[data-k="task"]')!.hasAttribute('data-done')).toBe(true);
 
     // Checklist: Enter crea otra
     await user.click(screen.getByText('+ Añadir tarjeta'));

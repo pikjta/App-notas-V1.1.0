@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
 afterEach(cleanup);
+import { pressNote, typeNote } from './noteutil';
 import App from '../App';
 
 describe('enlaces [[ ]] y tipos nuevos de tarjeta', () => {
@@ -19,16 +20,17 @@ describe('enlaces [[ ]] y tipos nuevos de tarjeta', () => {
     await user.type(screen.getAllByPlaceholderText('Sin título').slice(-1)[0], 'Brief');
 
     await user.click(screen.getByText('Inicio'));
-    await user.click(screen.getAllByTitle('Haz clic en el texto para editar')[0]);
-    const ta = screen.getByLabelText('Contenido de la nota (Markdown)') as HTMLTextAreaElement;
-    await user.type(ta, '{End}{Enter}Ver [[[[bri');
+    const ed = screen.getByRole('textbox', { name: 'Contenido de la nota' });
+    typeNote(ed, 'Ver [[');
+    typeNote(ed, 'bri');
     const pick = screen.getByRole('listbox', { name: 'Enlazar con' });
     expect(within(pick).getAllByRole('option')[0].textContent).toContain('Brief');
-    await user.keyboard('{Enter}');
-    expect(ta.value).toContain('Ver [[Mural Café Aurora/Brief]]');
-    await act(async () => { ta.blur(); });
+    pressNote(ed, 'Enter');
+    expect(ed.querySelector('.wiki')!.getAttribute('data-dest')).toBe('Mural Café Aurora/Brief');
+    expect(ed.textContent).not.toContain('[[');
+    await act(async () => { ed.blur(); });
 
-    await user.click(screen.getByRole('button', { name: 'Brief' }));
+    await user.click(ed.querySelector('.wiki') as HTMLElement);
     await screen.findByRole('heading', { name: 'Mural Café Aurora' });
     await user.click(screen.getByText(/^← Volver/));
     await screen.findByRole('heading', { name: 'Inicio' });

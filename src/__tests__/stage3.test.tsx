@@ -2,6 +2,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import { focusNote } from './noteutil';
 import App from '../App';
 
 afterEach(cleanup);
@@ -35,11 +36,13 @@ describe('etapa 3: tarjetas', () => {
 
     await user.click(screen.getByText('+ Añadir tarjeta'));
     await user.click(screen.getByRole('menuitem', { name: 'Nota' }));
-    await user.click(screen.getByText('Nota vacía. Haz clic para escribir en Markdown.'));
+    focusNote(screen.getByRole('textbox', { name: 'Contenido de la nota' }));
     await user.click(screen.getByLabelText('Enlace a otra tarea principal'));
     const dlg = screen.getByRole('dialog', { name: 'Enlazar a…' });
     await user.type(within(dlg).getByPlaceholderText('Buscar tarea principal o tarjeta…'), 'Inicio');
     await user.click(within(dlg).getAllByRole('option')[0]);
-    expect((screen.getByLabelText('Contenido de la nota (Markdown)') as HTMLTextAreaElement).value).toBe('[[Inicio|Inicio]]');
+    const w = screen.getByRole('textbox', { name: 'Contenido de la nota' }).querySelector('.wiki')!;
+    expect(w.getAttribute('data-dest')).toBe('Inicio');
+    expect(w.textContent).toBe('Inicio');
   }, 30_000);
 });

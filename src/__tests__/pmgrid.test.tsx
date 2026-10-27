@@ -120,4 +120,26 @@ describe('Tabla PM como hoja de cálculo (mejora 1.1.0, fase 3b)', () => {
     await user.keyboard('{Escape}');
     expect(dlg.isConnected).toBe(false);
   }, 30_000);
+
+  it('copiar toda la tabla lleva los nombres de columna; pegar más columnas de las que hay crea las que faltan', async () => {
+    const { user, dlg } = await open();
+    await user.click(td(0, 0));
+    await user.keyboard('{Control>}a{/Control}');
+    const setData = vi.fn();
+    fireEvent.copy(proxy(), { clipboardData: { setData } });
+    expect(setData).toHaveBeenCalledWith('application/x-cuaderno-grid', 'header');
+    const text = setData.mock.calls.find((c) => c[0] === 'text/plain')![1] as string;
+    const names = [...dlg.querySelectorAll('th[data-col] .th-in .grow')].map((n) => n.textContent);
+    expect(text.split('\n')[0].split('\t')).toEqual(names);
+    expect(text.split('\n').length).toBe(4); // cabeceras + 3 filas
+    // Pegar 3 columnas con cabeceras empezando en la última columna: se crean 2 columnas con esos nombres.
+    const before = dlg.querySelectorAll('th[data-col]').length;
+    await user.click(td(0, before - 1));
+    fireEvent.paste(proxy(), { clipboardData: { getData: (t: string) => (t === 'text/plain' ? 'Uno\tCol Y\tCol Z\nx\t2\t3\ny\t4\t5' : t === 'application/x-cuaderno-grid' ? 'header' : '') } });
+    expect(dlg.querySelectorAll('th[data-col]').length).toBe(before + 2);
+    expect([...dlg.querySelectorAll('th[data-col] .th-in .grow')].slice(-2).map((n) => n.textContent)).toEqual(['Col Y', 'Col Z']);
+    expect([txt(0, before), txt(1, before), txt(0, before + 1)]).toEqual(['2', '4', '3']); // columnas de número
+    await user.click(screen.getByLabelText('Deshacer'));
+    expect(dlg.querySelectorAll('th[data-col]').length).toBe(before);
+  }, 30_000);
 });

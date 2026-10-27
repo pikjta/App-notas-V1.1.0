@@ -52,27 +52,15 @@ describe('Tabla PM · Fase 3d en la interfaz', () => {
     await user.keyboard('{Escape}');
     expect(within(dlg).getByText('Barniz UV')).toBeTruthy();
 
-    // Resumen: suma del presupuesto de lo enlazado (sin heredar «€»).
+    // Ya no hay columnas «Fórmula» ni «Resumen»: las fórmulas se escriben en la celda, como en Excel.
     await user.click(within(dlg).getByText('+ Nueva columna'));
-    await user.click(within(pop()).getByText(/Resumen/));
-    await user.click(within(dlg).getByText('Resumen', { selector: '.th-in span' }));
-    await user.selectOptions(within(pop()).getByLabelText('Función'), 'sum');
-    await user.selectOptions(within(pop()).getByLabelText(/Propiedad de/), 'Presupuesto');
-    await user.keyboard('{Escape}');
-    expect(within(dlg).getByText('225,5')).toBeTruthy();
-
-    // Fórmula: primero con error (se avisa), luego correcta.
-    await user.click(within(dlg).getByText('+ Nueva columna'));
-    await user.click(within(pop()).getByText(/Fórmula/));
-    await user.click(within(dlg).getByText('Fórmula', { selector: '.th-in span' }));
-    const ta = within(pop()).getByLabelText('Fórmula');
-    await user.type(ta, 'round({{Resumen} * 1.21');
-    expect(pop().querySelector('.err')!.textContent).toMatch(/Se esperaba «\)»/);
-    await user.clear(ta); await user.type(ta, 'round({{Resumen} * 1.21, 2)');
-    expect(within(pop()).getByText('✓ Fórmula correcta')).toBeTruthy();
-    await user.click(within(pop()).getByRole('button', { name: '€' }));
-    await user.keyboard('{Escape}');
-    expect(within(dlg).getByText('272,86 €')).toBeTruthy();
+    expect(within(pop()).queryByText(/Fórmula/)).toBeNull();
+    expect(within(pop()).queryByText(/Resumen/)).toBeNull();
+    await user.click(within(pop()).getByText(/Número/));
+    const last = () => [...dlg.querySelectorAll('td[data-r="0"]')].slice(-1)[0] as HTMLElement;
+    await user.click(last());
+    await user.keyboard('=2*3+10{Tab}');
+    expect(last().textContent).toBe('16');
 
     // Galería.
     await user.click(within(dlg).getByLabelText('Añadir vista'));

@@ -1,164 +1,239 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useApp } from '../../App';
-import { Markdown, toggleTask } from '../../lib/markdown';
+import { atBlockStart, blockIsEmpty, blockOf, caretIn, fixBlock, firstEmptyTask, indent, makeLink, makeWiki, normalize, pasteText, render, serialize, setKind, splitBlock, toggleInline } from '../../lib/richnote';
+import type { Kind } from '../../lib/richnote';
+import { splitWiki } from '../../lib/markdown';
 import type { NoteCard } from '../../lib/model';
 
+/**
+ * Nota con texto enriquecido: se ve y se edita con su formato, sin sintaxis Markdown. Por dentro se guarda
+ * como Markdown (enlaces [[ ]], búsqueda, grafo y copias no cambian); la conversión está en lib/richnote.ts.
+ */
 export function NoteBody({ card }: { card: NoteCard }) {
   const { dispatch, resolveLink, linkTargets, editRequest, requestEdit } = useApp();
-  const [editing, setEditing] = useState(false);
-  // Si alguien pidió editar esta nota (nota del día recién creada), se abre con el cursor
-  // al final de la primera tarea vacía o al final del texto.
+  const root = useRef<HTMLDivElement>(null);
+  const last = useRef<string | null>(null);
+  const saved = useRef<Range | null>(null);
+  const [pick, setPick] = useState<{ node: Text; start: number; q: string; i: number } | null>(null);
+  const [dlg, setDlg] = useState<{ q: string; cards: boolean } | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+  const [empty, setEmpty] = useState(!card.body.trim());
+  const modal = useRef(false);
+  modal.current = !!dlg || url !== null;
+
+  // El Markdown guardado se pinta en el editor; si el cambio lo hizo el propio editor, no se repinta.
+  useLayoutEffect(() => {
+    const r = root.current;
+    if (!r || last.current === card.body) return;
+    render(r, card.body); last.current = card.body; setEmpty(!card.body.trim());
+  }, [card.body]);
+  // Se recuerda la selección para poder aplicar formato desde la barra o desde una ventana.
+  useEffect(() => {
+    const h = () => { const s = window.getSelection(); const r = root.current; if (s && s.rangeCount && r && r.contains(s.anchorNode)) saved.current = s.getRangeAt(0).cloneRange(); };
+    document.addEventListener('selectionchange', h);
+    return () => document.removeEventListener('selectionchange', h);
+  }, []);
+  // Nota del día recién creada: el cursor va a la primera tarea vacía o al final.
   useEffect(() => {
     if (editRequest !== card.id) return;
     requestEdit(null);
-    const i = card.body.indexOf('- [ ] ');
-    caret.current = i >= 0 ? [i + 6, i + 6] : [card.body.length, card.body.length];
-    setEditing(true);
-  }, [editRequest, card.id, card.body, requestEdit]);
+    const r = root.current;
+    if (!r) return;
+    r.focus();
+    const t = firstEmptyTask(r);
+    caretIn(t ?? (r.lastElementChild as HTMLElement), true);
+  }, [editRequest, card.id, requestEdit]);
+
+  const sync = () => {
+    const r = root.current;
+    if (!r) return;
+    normalize(r);
+    const md = serialize(r);
+    setEmpty(!md.trim());
+    if (md !== last.current) { last.current = md; dispatch({ t: 'patchCard', id: card.id, patch: { body: md } }); }
+  };
+  const range = (): Range | null => {
+    const s = window.getSelection(); const r = root.current;
+    if (s && s.rangeCount && r && r.contains(s.anchorNode)) return s.getRangeAt(0);
+    return saved.current && r?.contains(saved.current.startContainer) ? saved.current : null;
+  };
+  /** Ejecuta una acción de formato sobre la selección (o al final de la nota si no hay). */
+  const act = (fn: (r: Range, el: HTMLElement) => void) => {
+    const el = root.current;
+    if (!el) return;
+    let r = range();
+    if (!r) { el.focus(); caretIn(el.lastElementChild as HTMLElement, true); r = window.getSelection()!.getRangeAt(0); }
+    else if (document.activeElement !== el) { el.focus(); const s = window.getSelection()!; s.removeAllRanges(); s.addRange(r); }
+    fn(r, el); sync();
+  };
+  const kind = (k: Kind) => act((r, el) => setKind(el, r, k));
+  const inlineFmt = (tag: 'strong' | 'em' | 's' | 'code') => act((r, el) => toggleInline(el, r, tag));
+
   // Selector de enlaces: se abre al escribir «[[»; `start` es donde empieza lo que se busca.
-  const [pick, setPick] = useState<{ start: number; q: string; i: number } | null>(null);
-  const [dlg, setDlg] = useState<{ q: string; cards: boolean; at: number } | null>(null);
-  const ta = useRef<HTMLTextAreaElement>(null);
-  const caret = useRef<[number, number] | null>(null);
-  const pendingAct = useRef<(() => void) | null>(null);
-  useEffect(() => {
-    if (!editing || !ta.current) return;
-    ta.current.focus();
-    const [a, b] = caret.current ?? [ta.current.value.length, ta.current.value.length];
-    caret.current = null;
-    ta.current.setSelectionRange(a, b);
-    // Si se pulsó un botón de formato sin estar editando, se aplica ahora que el cuadro de texto ya existe.
-    const f = pendingAct.current; pendingAct.current = null; f?.();
-  }, [editing]);
-  // Posición del cursor que hay que aplicar justo después de que React actualice el texto
-  // (si se aplicara más tarde, al escribir rápido el cursor saltaría hacia atrás).
-  useLayoutEffect(() => {
-    const el = ta.current;
-    if (el && caret.current) { el.setSelectionRange(caret.current[0], caret.current[1]); caret.current = null; }
-  }, [card.body]);
-  const dlgOpen = useRef(false);
-  dlgOpen.current = !!dlg;
-  const set = (body: string, sel?: [number, number]) => { if (sel) caret.current = sel; dispatch({ t: 'patchCard', id: card.id, patch: { body } }); };
-
-  // Formato rápido sobre la selección (igual que la minibarra de la maqueta).
-  const wrap = (before: string, after = before) => {
-    const el = ta.current;
-    if (!el) return;
-    const { selectionStart: a, selectionEnd: b, value } = el;
-    el.focus();
-    set(value.slice(0, a) + before + value.slice(a, b) + after + value.slice(b), [a + before.length, b + before.length]);
-  };
-  const linePrefix = (prefix: string) => {
-    const el = ta.current;
-    if (!el) return;
-    const { selectionStart: a, value } = el;
-    const ls = value.lastIndexOf('\n', a - 1) + 1;
-    el.focus();
-    set(value.slice(0, ls) + prefix + value.slice(ls), [a + prefix.length, a + prefix.length]);
-  };
-
   const targets = pick ? linkTargets(pick.q) : [];
-  const insertLink = (dest: string) => {
-    const el = ta.current;
-    if (!el || !pick) return;
-    const caretAt = el.selectionStart;
-    const v = el.value;
-    const closes = v.slice(caretAt, caretAt + 2) === ']]';
-    const next = v.slice(0, pick.start) + dest + ']]' + v.slice(closes ? caretAt + 2 : caretAt);
-    const pos = pick.start + dest.length + 2;
-    setPick(null);
-    set(next, [pos, pos]);
+  const wikiAt = (node: Text, from: number, to: number, dest: string, label: string) => {
+    node.deleteData(from, to - from);
+    const r = document.createRange();
+    r.setStart(node, from); r.collapse(true);
+    const w = makeWiki(dest, label);
+    r.insertNode(w);
+    const after = document.createTextNode('\u200b');
+    w.after(after);
+    const c = document.createRange(); c.setStart(after, 1); c.collapse(true);
+    const s = window.getSelection(); s?.removeAllRanges(); s?.addRange(c);
   };
-  const watchLink = (value: string, caretAt: number) => {
-    if (value.slice(caretAt - 2, caretAt) === '[[') { setPick({ start: caretAt, q: '', i: 0 }); return; }
+  const insertLink = (dest: string) => {
+    if (!pick) return;
+    const caret = window.getSelection()?.anchorOffset ?? pick.start + pick.q.length;
+    const to = Math.max(pick.start, Math.min(caret, pick.node.length));
+    setPick(null);
+    wikiAt(pick.node, pick.start - 2, to, dest, splitWiki(dest).label);
+    sync();
+  };
+  const watchLink = () => {
+    const s = window.getSelection();
+    const n = s?.anchorNode;
+    if (!s || !s.isCollapsed || !n || n.nodeType !== 3) { setPick(null); return; }
+    const node = n as Text, off = s.anchorOffset;
+    if (node.data.slice(off - 2, off) === '[[') { setPick({ node, start: off, q: '', i: 0 }); return; }
     if (pick) {
-      const q = value.slice(pick.start, caretAt);
-      if (caretAt < pick.start || /[\]\n]/.test(q)) setPick(null);
-      else setPick({ ...pick, q, i: 0 });
+      const q = pick.node === node ? node.data.slice(pick.start, off) : '\n';
+      if (pick.node !== node || off < pick.start || /[\]\n]/.test(q)) setPick(null); else setPick({ ...pick, q, i: 0 });
     }
   };
 
-  /** Barra de formato (Markdown): siempre visible; sin editar, el botón abre la nota para escribir. */
-  const act = (fn: () => void) => { if (editing) { fn(); return; } pendingAct.current = fn; caret.current = [card.body.length, card.body.length]; setEditing(true); };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const el = root.current!;
+    if (pick && targets.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setPick({ ...pick, i: Math.min(targets.length - 1, pick.i + 1) }); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setPick({ ...pick, i: Math.max(0, pick.i - 1) }); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertLink(targets[pick.i].dest); return; }
+    }
+    if (pick && e.key === 'Escape') { e.preventDefault(); setPick(null); return; }
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.altKey && e.key.toLowerCase() === 'b') { e.preventDefault(); inlineFmt('strong'); return; }
+    if (mod && !e.altKey && e.key.toLowerCase() === 'i') { e.preventDefault(); inlineFmt('em'); return; }
+    if (e.key === 'Escape') { el.blur(); return; }
+    const s = window.getSelection();
+    if (!s || !s.rangeCount) return;
+    const r = s.getRangeAt(0);
+    const b = blockOf(r.startContainer, el);
+    if (!b) return;
+    const k = b.dataset.k as Kind;
+    if (e.key === 'Enter' && !mod) {
+      e.preventDefault();
+      if ((k === 'li' || k === 'ol' || k === 'task') && r.collapsed && blockIsEmpty(b)) { setKind(el, r, k); fixBlock(b); caretIn(b, true); sync(); return; }
+      const nb = splitBlock(b, r);
+      caretIn(nb, false); sync();
+      return;
+    }
+    if (e.key === 'Backspace' && k !== 'p' && k !== 'hr' && atBlockStart(b, r)) { e.preventDefault(); setKind(el, r, k); caretIn(b, false); sync(); return; }
+    if (e.key === 'Tab' && !mod && (k === 'li' || k === 'ol' || k === 'task')) { e.preventDefault(); indent(el, r, e.shiftKey ? -1 : 1); sync(); }
+  };
+  const onPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    e.preventDefault();
+    const r = range();
+    if (!text || !r || !root.current) return;
+    const lb = pasteText(root.current, r, text);
+    if (lb) caretIn(lb, true);
+    sync();
+  };
+  const onCopy = (e: React.ClipboardEvent<HTMLDivElement>, cut: boolean) => {
+    const r = range();
+    if (!r || r.collapsed) return;
+    e.preventDefault();
+    const tmp = document.createElement('div');
+    tmp.append(r.cloneContents());
+    normalize(tmp);
+    e.clipboardData?.setData('text/plain', serialize(tmp));
+    if (cut) { r.deleteContents(); const b = blockOf(r.startContainer, root.current!); if (b) fixBlock(b); sync(); }
+  };
+  const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const t = e.target as HTMLElement;
+    const w = t.closest('.wiki') as HTMLElement | null;
+    if (w) { e.stopPropagation(); const r = resolveLink(w.dataset.dest ?? ''); if (r.ok) r.go(); return; }
+    const m = t.closest('.rn-mark[data-mark="task"]');
+    if (m) { const b = m.parentElement as HTMLElement; if (b.dataset.done) delete b.dataset.done; else b.dataset.done = '1'; fixBlock(b); sync(); return; }
+    const a = t.closest('a.ext') as HTMLElement | null;
+    if (a) { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new CustomEvent('cuaderno:open-url', { detail: a.dataset.url ?? '' })); }
+  };
+
   const noteBar = (
-    <div className="mini-bar" onMouseDown={(e) => e.preventDefault()}>
-        <button onClick={() => act(() => linePrefix('## '))} title="Título" aria-label="Título">H</button>
-        <button onClick={() => act(() => wrap('**'))} title="Negrita (⌘B)"><b>B</b></button>
-        <button onClick={() => act(() => wrap('*'))} title="Cursiva (⌘I)"><i>I</i></button>
-        <button onClick={() => act(() => wrap('~~'))} title="Tachado"><s>S</s></button>
-        <button onClick={() => act(() => wrap('`'))} title="Código" aria-label="Código">{'<>'}</button>
-        <button onClick={() => act(() => linePrefix('- '))} title="Lista" aria-label="Lista">•</button>
-        <button onClick={() => act(() => linePrefix('- [ ] '))} title="Casilla de tarea" aria-label="Casilla de tarea">☐</button>
-        <button onClick={() => act(() => linePrefix('> '))} title="Cita" aria-label="Cita">❝</button>
-        <button title="Enlace" aria-label="Enlace" onClick={() => act(() => {
-          const el = ta.current;
-          if (!el) return;
-          const { selectionStart: a, selectionEnd: b, value } = el;
-          const text = value.slice(a, b) || 'texto';
-          el.focus();
-          set(value.slice(0, a) + '[' + text + '](https://)' + value.slice(b), [a + text.length + 4, a + text.length + 12]);
-        })}>🔗</button>
-        <button title="Enlace a otra tarea principal [[ ]]" aria-label="Enlace a otra tarea principal" onClick={() => act(() => setDlg({ q: '', cards: true, at: ta.current?.selectionStart ?? card.body.length }))}>[[ ]]</button>
-        {editing && <button className="grow-btn" title="Listo" aria-label="Listo" onClick={() => { setPick(null); setEditing(false); }}>Listo</button>}
-      </div>
+    <div className="mini-bar" role="toolbar" aria-label="Formato de la nota" onMouseDown={(e) => { if (!(e.target as HTMLElement).closest('input')) e.preventDefault(); }}>
+      <button onClick={() => kind('h2')} title="Título" aria-label="Título">H</button>
+      <button onClick={() => inlineFmt('strong')} title="Negrita (⌘B)"><b>B</b></button>
+      <button onClick={() => inlineFmt('em')} title="Cursiva (⌘I)"><i>I</i></button>
+      <button onClick={() => inlineFmt('s')} title="Tachado"><s>S</s></button>
+      <button onClick={() => inlineFmt('code')} title="Código" aria-label="Código">{'<>'}</button>
+      <button onClick={() => kind('li')} title="Lista" aria-label="Lista">•</button>
+      <button onClick={() => kind('task')} title="Casilla de tarea" aria-label="Casilla de tarea">☐</button>
+      <button onClick={() => kind('quote')} title="Cita" aria-label="Cita">❝</button>
+      <button title="Enlace" aria-label="Enlace" onClick={() => { range(); setUrl('https://'); }}>🔗</button>
+      <button title="Enlace a otra tarea principal" aria-label="Enlace a otra tarea principal" onClick={() => { range(); setDlg({ q: '', cards: true }); }}>[[ ]]</button>
+    </div>
   );
 
-  if (!editing) {
-    return (
-      <div className="note-edit">
-        {noteBar}
-      <div className="note-view" onClick={() => setEditing(true)} title="Haz clic en el texto para editar">
-        {card.body.trim() ? <Markdown body={card.body} link={resolveLink} onToggle={(line) => set(toggleTask(card.body, line))} /> : <span className="muted">Nota vacía. Haz clic para escribir en Markdown.</span>}
-      </div>
-      </div>
-    );
-  }
+  /** Selección guardada (o el final de la nota si no hay ninguna) lista para insertar algo. */
+  const restore = (): Range | null => {
+    const el = root.current;
+    if (!el) return null;
+    el.focus();
+    const s = window.getSelection()!;
+    if (saved.current && el.contains(saved.current.startContainer)) { s.removeAllRanges(); s.addRange(saved.current); } else caretIn(el.lastElementChild as HTMLElement, true);
+    return s.getRangeAt(0);
+  };
+  const back = () => window.setTimeout(() => { const s = window.getSelection(); const r = saved.current; root.current?.focus(); if (r && s) { s.removeAllRanges(); s.addRange(r); } }, 0);
+
   return (
     <div className="note-edit">
       {noteBar}
-      <textarea
-        ref={ta}
-        value={card.body}
-        onChange={(e) => { set(e.target.value); watchLink(e.target.value, e.target.selectionStart); }}
-        onBlur={() => { if (dlgOpen.current) return; setPick(null); setEditing(false); }}
-        onKeyDown={(e) => {
-          if (pick && targets.length) {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setPick({ ...pick, i: Math.min(targets.length - 1, pick.i + 1) }); return; }
-            if (e.key === 'ArrowUp') { e.preventDefault(); setPick({ ...pick, i: Math.max(0, pick.i - 1) }); return; }
-            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertLink(targets[pick.i].dest); return; }
-          }
-          if (pick && e.key === 'Escape') { e.preventDefault(); setPick(null); return; }
-          const mod = e.metaKey || e.ctrlKey;
-          if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); wrap('**'); }
-          if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); wrap('*'); }
-          if (e.key === 'Escape') ta.current?.blur();
-          if (e.key === 'Enter' && !e.shiftKey) {
-            // Enter continúa listas y tareas.
-            const el = e.currentTarget;
-            const ls = el.value.lastIndexOf('\n', el.selectionStart - 1) + 1;
-            const m = el.value.slice(ls, el.selectionStart).match(/^(\s*)(- \[[ xX]\] |- |\d+\. )/);
-            if (m) {
-              e.preventDefault();
-              const next = m[2].startsWith('- [') ? '- [ ] ' : /\d/.test(m[2]) ? `${parseInt(m[2], 10) + 1}. ` : m[2];
-              const ins = '\n' + m[1] + next;
-              const pos = el.selectionStart + ins.length;
-              set(el.value.slice(0, el.selectionStart) + ins + el.value.slice(el.selectionEnd), [pos, pos]);
-            }
-          }
-        }}
-        rows={Math.max(6, card.body.split('\n').length + 1)}
-        aria-label="Contenido de la nota (Markdown)"
+      <div
+        ref={root}
+        className="note-rich"
+        contentEditable
+        suppressContentEditableWarning
+        tabIndex={0}
+        role="textbox"
+        aria-multiline="true"
+        aria-label="Contenido de la nota"
+        data-empty={empty ? '1' : undefined}
+        data-ph="Nota vacía. Haz clic para escribir."
+        spellCheck
+        onInput={() => { sync(); watchLink(); }}
+        onKeyDown={onKeyDown}
+        onPaste={onPaste}
+        onCopy={(e) => onCopy(e, false)}
+        onCut={(e) => onCopy(e, true)}
+        onClick={onClick}
+        onBlur={() => { if (modal.current) return; setPick(null); const r = root.current; if (r) { const md = serialize(r); render(r, md); last.current = md; } }}
       />
+      {url !== null && (
+        <div className="link-dlg" role="dialog" aria-label="Enlace">
+          <h3>Enlace</h3>
+          <input autoFocus value={url} aria-label="Dirección del enlace" onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { e.stopPropagation(); setUrl(null); back(); }
+              if (e.key === 'Enter') { e.preventDefault(); const v = url.trim(); setUrl(null); if (v) { const r = restore(); if (r) { makeLink(r, v); sync(); } } back(); }
+            }} />
+          <div className="row-end"><button className="tool small-btn" onClick={() => { setUrl(null); back(); }}>Cancelar</button></div>
+        </div>
+      )}
       {dlg && (() => {
         const all = linkTargets(dlg.q).filter((t) => dlg.cards || t.kind === 'Tarea principal' || t.kind === 'Nota diaria');
-        const close = () => { setDlg(null); window.setTimeout(() => ta.current?.focus(), 0); };
+        const close = () => { setDlg(null); back(); };
         const choose = (t: { dest: string; label: string }) => {
-          const v = card.body, at = dlg.at;
-          const ins = `[[${t.dest}|${t.label.replace(/^Diario · .*/, 'diario')}]]`;
-          const pos = at + ins.length;
           setDlg(null);
-          set(v.slice(0, at) + ins + v.slice(at), [pos, pos]);
-          window.setTimeout(() => ta.current?.focus(), 0);
+          const r = restore();
+          if (r) {
+            const s = window.getSelection()!;
+            r.deleteContents();
+            const w = makeWiki(t.dest, t.label.replace(/^Diario · .*/, 'diario'));
+            r.insertNode(w);
+            const after = document.createTextNode('\u200b'); w.after(after);
+            const c = document.createRange(); c.setStart(after, 1); c.collapse(true); s.removeAllRanges(); s.addRange(c);
+            sync();
+          }
         };
         return (
           <div className="link-dlg" role="dialog" aria-label="Enlazar a…">

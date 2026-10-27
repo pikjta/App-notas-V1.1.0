@@ -78,13 +78,14 @@ describe('Barra lateral · mover tareas e iconos (mejora 1.1.0, fase 6)', () => 
     await addProject(user, 'Mural');
     const row = () => rows().find((r) => r.querySelector('.side-name')!.textContent === 'Mural')!;
     expect(row().querySelector('.dot')).not.toBeNull();
-    await user.click(within(row()).getByLabelText('Icono de la tarea'));
-    const menu = screen.getByRole('menu', { name: 'Icono de la tarea' });
-    expect(menu.querySelectorAll('.icon-cell').length).toBeGreaterThan(40);
-    await user.click(menu.querySelector('.icon-cell')!);
+    expect(within(row()).queryByLabelText('Icono de la tarea')).toBeNull(); // ya no está en la barra lateral
+    await user.click(row().querySelector('.side-item')!);
+    await user.click(screen.getByText('Personalizar tablero'));
+    const grid = screen.getByRole('group', { name: 'Icono de la tarea' });
+    expect(grid.querySelectorAll('.icon-cell').length).toBeGreaterThan(40);
+    await user.click(grid.querySelector('.icon-cell')!);
     expect(row().querySelector('.proj-icon svg')).not.toBeNull();
     expect(row().querySelector('.dot')).toBeNull();
-    await user.click(within(row()).getByLabelText('Icono de la tarea'));
     await user.click(screen.getByText('Punto de color'));
     expect(row().querySelector('.dot')).not.toBeNull();
   }, 30_000);

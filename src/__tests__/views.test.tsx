@@ -2,6 +2,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import { typeNote } from './noteutil';
 import App from '../App';
 
 afterEach(cleanup);
@@ -40,11 +41,11 @@ describe('vistas: Hoy, Recordatorios, Diario e Inicio', () => {
     expect(screen.getByText('Nota del día', { selector: '.card-kind' })).toBeTruthy();
     expect(screen.getByLabelText('Color de la tarjeta')).toBeTruthy();
     // Se abre directamente en edición, con el cursor en la primera tarea.
-    const ta = screen.getByLabelText('Contenido de la nota (Markdown)') as HTMLTextAreaElement;
+    const ta = screen.getByRole('textbox', { name: 'Contenido de la nota' });
     expect(document.activeElement).toBe(ta);
     expect(screen.getByTitle('Negrita (⌘B)')).toBeTruthy();
-    await user.keyboard('Pedir el andamio');
-    expect(ta.value).toContain('- [ ] Pedir el andamio');
+    typeNote(ta, 'Pedir el andamio');
+    expect(ta.querySelector('[data-k="task"]')!.textContent).toContain('Pedir el andamio');
     ta.blur();
     await user.click(screen.getByLabelText('Día anterior'));
     expect(screen.getByText('Sin nota este día')).toBeTruthy();

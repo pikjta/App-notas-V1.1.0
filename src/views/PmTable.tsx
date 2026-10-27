@@ -5,18 +5,18 @@ import { dayKey } from '../lib/agenda';
 import type { PmCard } from '../lib/model';
 import { activeViewId, allStates, COLOR_KEYS, COLORS, FILTER_OPS, formatDate, formatNum, newCol, optsOf, pmId, progress, stateInfo, tableProgress, total, TOTALS, TYPE_ICON, TYPE_LABEL, VIEW_LABEL, pmViews, visibleRows } from '../lib/pm';
 import type { CellVal, Col, ColType, DateVal, Filter, NumFmt, Opt, Phase, Pm, PmOp, PmView, Row, Sort } from '../lib/pm';
-import { cellText, colLetter, displayExpr, formatFVal, formulaValue, rowNumber, storeExpr, ROLL_FNS, rowTitle, asTimer, blockers, strList, dateColOf, defaultKanban, formatTimer, ruleFor, timerMs } from '../lib/pm';
+import { cellFormula, cellText, colLetter, displayExpr, formatFVal, formulaText, formulaValue, rowNumber, storeExpr, toCellFormula, ROLL_FNS, rowTitle, asTimer, blockers, strList, dateColOf, defaultKanban, formatTimer, ruleFor, timerMs } from '../lib/pm';
 import type { Rule } from '../lib/pm';
 import { PmCalendar } from './pm/PmCalendar';
 import { Timeline } from './pm/Timeline';
-import { asTemplate, planImport, toClipboard, toCsv } from '../lib/pmio';
+import { asTemplate, parseNumber, planImport, toClipboard, toCsv } from '../lib/pmio';
 import type { CsvPlan } from '../lib/pmio';
 import { Kanban, KanbanPicker } from './pm/Kanban';
 import { ImageMenu, ImageThumbs, RelationMenu, RelPills } from './pm/Linked';
 import { checkFormula, FUNCTION_HELP, propsIn } from '../lib/formula';
 import { FormulaErrorDialog } from '../components/FormulaErrorDialog';
 import { RowPage } from './pm/RowPage';
-import { allOf, inRect, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../lib/grid';
+import { allOf, GRID_MIME, inRect, isAll, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../lib/grid';
 import type { Dims, Pos, Sel } from '../lib/grid';
 import { copyValue, PASTABLE, pasteValue } from '../lib/pmgrid';
 import { SuggestList } from '../components/SuggestList';
@@ -207,6 +207,15 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
   const POPUP = new Set<ColType>(['select', 'multi', 'status', 'date', 'relation', 'image']);
   const tdAt = (r: number, c: number) => document.querySelector(`.pm-grid td[data-r="${r}"][data-c="${c}"]`) as HTMLElement | null;
   const matrix = (s: Sel) => { const rc = rectOf(s); const m: string[][] = []; for (let r = rc.r0; r <= rc.r1; r++) { const line: string[] = []; for (let c = rc.c0; c <= rc.c1; c++) line.push(gridRows[r] && cols[c] ? copyValue(pm, cols[c], gridRows[r], tags) : ''); m.push(line); } return m; };
+  /** Copiar: si se eligió toda la tabla, la primera línea son los nombres de las columnas (se pegan en otra tabla como cabeceras). */
+  const putClip = (dt: DataTransfer | null, s: Sel) => {
+    if (!dt) return;
+    const full = isAll(s, dims);
+    const m = matrix(s);
+    if (full) m.unshift(cols.map((c) => c.name));
+    dt.setData('text/plain', toTsv(m));
+    if (full) dt.setData(GRID_MIME, 'header');
+  };
   const setCell = (row: string, col: string, value: CellVal) => op({ op: 'cell', row, col, value });
   const select = (a: Pos, b: Pos = a) => setSel({ a, b });
   const openCell = (pos: Pos) => { const c = cols[pos.c], r = gridRows[pos.r], td = tdAt(pos.r, pos.c); if (c && r && td) setPop({ kind: 'cell', col: c.id, row: r.id, ...at({ currentTarget: td }) }); };
@@ -219,6 +228,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
       orig.current = r.cells[c.id] ?? null;
       if (seed !== undefined) {
         if (c.type === 'text') setCell(r.id, c.id, seed);
+        else if (seed === '=') setCell(r.id, c.id, '=');
         else if (/^\d$/.test(seed)) setCell(r.id, c.id, Number(seed));
         else return; // un número no admite esa letra
       }
@@ -237,18 +247,34 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
     for (let r = rc.r0; r <= rc.r1; r++) for (let c = rc.c0; c <= rc.c1; c++) { const col = cols[c], row = gridRows[r]; if (col && row && PASTABLE.has(col.type)) ops.push({ op: 'cell', row: row.id, col: col.id, value: EMPTY[col.type] ?? null }); }
     if (ops.length) op({ op: 'batch', ops });
   };
-  const pasteText = (s: Sel, text: string) => {
-    const plan = pastePlan(s, parseTsv(text));
+  const pasteText = (s: Sel, text: string, header = false) => {
+    let data = parseTsv(text);
+    // Una tabla copiada entera trae sus cabeceras en la primera línea: dan nombre a las columnas nuevas y no se pegan como datos.
+    const heads = header && data.length ? data[0] : null;
+    if (heads) data = data.slice(1);
+    if (!data.length) return;
+    const plan = pastePlan(s, data);
+    const width = Math.max(...plan.data.map((l) => l.length));
     const ops: PmOp[] = [];
+    // Más columnas copiadas que columnas en la tabla: se crean las que faltan (de número si todo lo pegado son números).
+    const made: Col[] = [];
+    for (let j = cols.length - plan.at.c; j < width; j++) {
+      const vals = plan.data.map((l) => (l[j] ?? '').trim()).filter(Boolean);
+      const col = newCol(vals.length && vals.every((v) => parseNumber(v) !== null) ? 'number' : 'text', pm);
+      col.name = (heads?.[j]?.trim() || 'Columna ' + (pm.cols.length + made.length + 1));
+      made.push(col);
+      ops.push({ op: 'addCol', col });
+    }
+    const allCols = [...cols, ...made];
     let added = 0;
     plan.data.forEach((line, i) => {
       const ri = plan.at.r + i;
       const row = gridRows[ri];
       const fresh: Record<string, CellVal> = {};
       line.forEach((raw, j) => {
-        const col = cols[plan.at.c + j];
+        const col = allCols[plan.at.c + j];
         if (!col) return;
-        const pv = pasteValue(col, raw, tags);
+        const pv = pasteValue(col, raw, tags, pm);
         if (!pv) return;
         if (row) ops.push({ op: 'cell', row: row.id, col: col.id, value: pv.value });
         else if (raw.trim() !== '') fresh[col.id] = pv.value;
@@ -258,7 +284,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
     });
     if (!ops.length) return;
     op({ op: 'batch', ops });
-    select({ r: plan.at.r, c: plan.at.c }, { r: Math.min(plan.at.r + plan.data.length - 1, gridRows.length - 1 + added), c: Math.min(plan.at.c + Math.max(...plan.data.map((l) => l.length)) - 1, cols.length - 1) });
+    select({ r: plan.at.r, c: plan.at.c }, { r: Math.min(plan.at.r + plan.data.length - 1, gridRows.length - 1 + added), c: plan.at.c + width - 1 });
   };
   /** Enter (abajo) o Tab (derecha): confirma y pasa a la celda vecina; al pasar de la última fila crea otra. */
   const moveFrom = (p: Pos, dr: number, dc: number, grow: boolean) => {
@@ -391,7 +417,7 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
           <table className="pm-grid">
             <thead>
               <tr>
-                <th className="pm-grip-h" style={{ width: GRIP, minWidth: GRIP }} />
+                <th className="pm-grip-h" style={{ width: GRIP, minWidth: GRIP }} title="Fila 1: cabeceras"><span className="small muted">1</span></th>
                 {cols.map((c, k) => {
                   const sort = pm.sorts.find((s) => s.col === c.id);
                   return (
@@ -443,9 +469,9 @@ export function PmTable({ cardId, rowId, onClose }: { cardId: string; rowId?: st
           </table>
           <textarea ref={proxy} className="grid-proxy" tabIndex={-1} aria-label="Celdas seleccionadas (para copiar, cortar o pegar)" onKeyDown={onProxyKey}
             onChange={(e) => { e.currentTarget.value = ''; }}
-            onCopy={(e) => { if (!sel) return; e.preventDefault(); e.clipboardData?.setData('text/plain', toTsv(matrix(sel))); }}
-            onCut={(e) => { if (!sel) return; e.preventDefault(); e.clipboardData?.setData('text/plain', toTsv(matrix(sel))); clearSel(sel); }}
-            onPaste={(e) => { if (!sel) return; const text = e.clipboardData?.getData('text/plain') ?? ''; if (!text) return; e.preventDefault(); pasteText(sel, text); }} />
+            onCopy={(e) => { if (!sel) return; e.preventDefault(); putClip(e.clipboardData, sel); }}
+            onCut={(e) => { if (!sel) return; e.preventDefault(); putClip(e.clipboardData, sel); clearSel(sel); }}
+            onPaste={(e) => { if (!sel) return; const text = e.clipboardData?.getData('text/plain') ?? ''; if (!text) return; e.preventDefault(); pasteText(sel, text, e.clipboardData?.getData(GRID_MIME) === 'header'); }} />
           {editing && editCol && editRow && <SuggestList anchor={document.getElementById(cellId(editRow.id, editCol.id))} items={sugg} hint={hint} watch={typed}
             onPick={(v) => { setCell(editRow.id, editCol.id, v); setHint(-1); document.getElementById(cellId(editRow.id, editCol.id))?.focus(); }} />}
           {pages > 1 && <div className="row pm-pages"><button className="tool small-btn" disabled={pageN === 0} onClick={() => setPageN(pageN - 1)}>‹ Anterior</button><span className="small muted">Filas {pageN * PAGE + 1}–{Math.min(rows.length, pageN * PAGE + PAGE)} de {rows.length}</span><button className="tool small-btn" disabled={pageN >= pages - 1} onClick={() => setPageN(pageN + 1)}>Siguiente ›</button></div>}
@@ -467,6 +493,8 @@ function Pills({ list }: { list: { name: string; color: string }[] }) {
   return <>{list.map((o, i) => { const [bg, fg] = COLORS[o.color] ?? COLORS.gray; return <span key={i} className="pill" style={{ background: bg, color: fg }}>{o.name}</span>; })}</>;
 }
 
+/** Tipos de columna que ya no se ofrecen: las fórmulas se escriben en la celda («=SUMA(A2:A9)»). Las columnas que ya existían siguen funcionando. */
+const RETIRED = new Set<ColType>(['formula', 'rollup']);
 const caretEnd = (e: React.FocusEvent<HTMLInputElement>) => { const n = e.currentTarget.value.length; e.currentTarget.setSelectionRange(n, n); };
 
 /**
@@ -479,12 +507,23 @@ function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefine
   // Botones de menú: en la cuadrícula solo se seleccionan (el menú se abre con doble clic).
   const btn = grid ? { tabIndex: -1 } : { 'data-pop': true, onClick: open, onKeyDown: onKey };
   switch (col.type) {
-    case 'text':
-      if (grid && !editing) return <div id={id} className="pm-in pm-view" style={fs} aria-label={col.name}>{typeof v === 'string' ? v : ''}</div>;
-      return <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''} onChange={(e) => set(e.target.value)} onKeyDown={onKey} aria-label={col.name} autoFocus={grid} onFocus={grid ? caretEnd : undefined} style={fs} />;
-    case 'number':
-      if (grid && !editing) return <div id={id} className="pm-in num pm-view" style={fs} aria-label={col.name} title={typeof v === 'number' ? formatNum(col, v) : ''}>{typeof v === 'number' ? formatNum(col, v) : ''}</div>;
-      return <NumberCell id={id} col={col} v={typeof v === 'number' ? v : null} set={set} onKey={onKey} auto={grid} style={fs} />;
+    case 'text': {
+      const cf = cellFormula(pm, col, row, tags);
+      if (grid && !editing) {
+        if (cf?.error) return <FormulaErr pm={pm} col={col} row={row} error={cf.error} formula={formulaText(pm, v as string)} />;
+        return <div id={id} className="pm-in pm-view" style={fs} aria-label={col.name} title={cf ? formulaText(pm, v as string) : undefined}>{cf ? formatFVal(col, cf.value) : typeof v === 'string' ? v : ''}</div>;
+      }
+      return <TextInput id={id} pm={pm} col={col} v={v} set={set} onKey={onKey} auto={grid} style={fs} />;
+    }
+    case 'number': {
+      const cf = cellFormula(pm, col, row, tags);
+      if (grid && !editing) {
+        if (cf?.error) return <FormulaErr pm={pm} col={col} row={row} error={cf.error} formula={formulaText(pm, v as string)} num />;
+        const shown = cf ? formatFVal(col, cf.value) : typeof v === 'number' ? formatNum(col, v) : '';
+        return <div id={id} className="pm-in num pm-view" style={fs} aria-label={col.name} title={cf ? formulaText(pm, v as string) : shown}>{shown}</div>;
+      }
+      return <NumberCell id={id} pm={pm} col={col} v={typeof v === 'number' || typeof v === 'string' ? v : null} display={cf ? (cf.error ? '⚠ Error' : formatFVal(col, cf.value)) : undefined} set={set} onKey={onKey} auto={grid} style={fs} />;
+    }
     case 'formula': {
       return <FormulaCell pm={pm} col={col} row={row} tags={tags} style={fs} />;
     }
@@ -515,18 +554,49 @@ function Cell({ pm, col, row, tags, id, set, onKey, open, timer = () => undefine
   }
 }
 
-function NumberCell({ id, col, v, set, onKey, auto = false, style }: { style?: React.CSSProperties; id: string; col: Col; v: number | null; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto?: boolean }) {
+function NumberCell({ id, pm, col, v, display, set, onKey, auto = false, style }: { style?: React.CSSProperties; id: string; pm: Pm; col: Col; v: number | string | null; display?: string; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto?: boolean }) {
   const [text, setText] = useState<string | null>(null);
+  const isF = typeof v === 'string' && v.startsWith('=');
+  const plain = typeof v === 'number' ? v : null;
   return (
-    <input id={id} className="pm-in num" style={style} inputMode="decimal" aria-label={col.name}
-      value={text ?? (v === null ? '' : formatNum(col, v))}
+    <input id={id} className="pm-in num" style={style} inputMode={isF || text?.startsWith('=') ? 'text' : 'decimal'} aria-label={col.name}
+      value={text ?? (isF ? display ?? '' : plain === null ? '' : formatNum(col, plain))}
       placeholder={col.fmt === 'eur' ? '€' : col.fmt === 'h' ? 'h' : ''}
-      title={v === null ? '' : formatNum(col, v)}
+      title={isF ? formulaText(pm, v as string) : plain === null ? '' : formatNum(col, plain)}
       autoFocus={auto}
-      onFocus={(e) => { setText(v === null ? '' : String(v).replace('.', ',')); if (auto) { const el = e.currentTarget; window.setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0); } }}
-      onChange={(e) => { setText(e.target.value); const n = parseFloat(e.target.value.replace(/\s/g, '').replace(',', '.')); set(e.target.value.trim() === '' || isNaN(n) ? null : n); }}
+      onFocus={(e) => { setText(isF ? formulaText(pm, v as string) : plain === null ? '' : String(plain).replace('.', ',')); if (auto) { const el = e.currentTarget; window.setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0); } }}
+      onChange={(e) => {
+        const t = e.target.value;
+        setText(t);
+        // Un texto que empieza por «=» es una fórmula: se guarda por identidad de filas y columnas.
+        if (t.startsWith('=')) { set(toCellFormula(pm, t)); return; }
+        const n = parseFloat(t.replace(/\s/g, '').replace(',', '.'));
+        set(t.trim() === '' || isNaN(n) ? null : n);
+      }}
       onBlur={() => setText(null)}
       onKeyDown={onKey} />
+  );
+}
+
+/** Texto de una celda de texto: si empieza por «=» es una fórmula y se muestra con letras y números (B2). */
+function TextInput({ id, pm, col, v, set, onKey, auto, style }: { id: string; pm: Pm; col: Col; v: CellVal | undefined; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto: boolean; style?: React.CSSProperties }) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const isF = typeof v === 'string' && v.startsWith('=');
+  return (
+    <input id={id} className="pm-in" value={typed ?? (isF ? formulaText(pm, v as string) : typeof v === 'string' ? v : '')}
+      onChange={(e) => { const t = e.target.value; if (t.startsWith('=')) { setTyped(t); set(toCellFormula(pm, t)); } else { setTyped(null); set(t); } }}
+      onBlur={() => setTyped(null)} onKeyDown={onKey} aria-label={col.name} autoFocus={auto} onFocus={auto ? caretEnd : undefined} style={style} />
+  );
+}
+
+/** «⚠ Error» de una celda con fórmula: un clic abre la ventana que lo explica. */
+function FormulaErr({ pm, col, row, error, formula, num }: { pm: Pm; col: Col; row: Row; error: string; formula: string; num?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className={'pm-formula err' + (num ? ' num' : '')} title={error + ' · clic para ver la explicación'} data-nogrid onClick={() => setOpen(true)}>⚠ Error</button>
+      {open && <FormulaErrorDialog error={error} formula={formula} where={`Columna ${colLetter(pm.cols.indexOf(col))} «${col.name}», fila ${rowNumber(pm, row.id)}`} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -561,7 +631,7 @@ function ColMenu({ col, pm, card, close, op }: { col: Col; pm: Pm; card: PmCard;
       <input autoFocus value={col.name} aria-label="Nombre de la columna" onChange={(e) => patch({ name: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && close()} />
       <label className="menu-label">Tipo
         <select value={col.type} onChange={(e) => dispatch({ t: 'pmConvert', card: card.id, col: col.id, type: e.target.value as ColType })}>
-          {(Object.keys(TYPE_LABEL) as ColType[]).map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
+          {(Object.keys(TYPE_LABEL) as ColType[]).filter((t) => !RETIRED.has(t) || col.type === t).map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
         </select>
       </label>
       {col.type === 'number' && (
@@ -839,7 +909,7 @@ function AddColMenu({ pm, op, close }: { pm: Pm; op: (o: PmOp) => void; close: (
   return (
     <>
       <span className="menu-label">Tipo de columna</span>
-      {(Object.keys(TYPE_LABEL) as ColType[]).map((t) => <button key={t} onClick={() => { op({ op: 'addCol', col: newCol(t, pm) }); close(); }}><span className="th-icon">{TYPE_ICON[t]}</span> {TYPE_LABEL[t]}</button>)}
+      {(Object.keys(TYPE_LABEL) as ColType[]).filter((t) => !RETIRED.has(t)).map((t) => <button key={t} onClick={() => { op({ op: 'addCol', col: newCol(t, pm) }); close(); }}><span className="th-icon">{TYPE_ICON[t]}</span> {TYPE_LABEL[t]}</button>)}
     </>
   );
 }
@@ -985,15 +1055,9 @@ function ImportMenu({ pm, card, plan, name, close }: { pm: Pm; card: PmCard; pla
 }
 
 function FormulaCell({ pm, col, row, tags, style }: { pm: Pm; col: Col; row: Row; tags: Opt[]; style?: React.CSSProperties }) {
-  const [open, setOpen] = useState(false);
   const r = formulaValue(pm, col, row, tags);
   if (!r.error) return <span className={'pm-formula' + (typeof r.value === 'number' ? ' num' : '')} style={style}>{formatFVal(col, r.value)}</span>;
-  return (
-    <>
-      <button className="pm-formula err" title={r.error + ' · clic para ver la explicación'} data-nogrid onClick={() => setOpen(true)}>⚠ Error</button>
-      {open && <FormulaErrorDialog error={r.error} formula={displayExpr(pm, col.expr ?? '')} where={`Columna ${colLetter(pm.cols.indexOf(col))} «${col.name}», fila ${rowNumber(pm, row.id)}`} onClose={() => setOpen(false)} />}
-    </>
-  );
+  return <FormulaErr pm={pm} col={col} row={row} error={r.error} formula={displayExpr(pm, col.expr ?? '')} />;
 }
 
 function FormulaEditor({ pm, col, patch }: { pm: Pm; col: Col; patch: (p: Partial<Col>) => void }) {

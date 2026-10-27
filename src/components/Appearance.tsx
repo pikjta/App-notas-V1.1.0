@@ -169,6 +169,13 @@ export function BoardPanel({ project, onClose }: { project: Project; onClose: ()
           })}
         </div>
       </div>
+      <div className="ap-field">
+        <span className="menu-label">Icono de la tarea</span>
+        <div className="icon-grid" role="group" aria-label="Icono de la tarea">
+          {ICON_KEYS.map((k) => <button key={k} className={'icon-cell' + (project.icon === k ? ' on' : '')} title={iconLabel(k)} aria-label={iconLabel(k)} aria-pressed={project.icon === k} onClick={() => dispatch({ t: 'patchProject', id: project.id, patch: { icon: k } })}><Icon name={k} size={18} /></button>)}
+        </div>
+        <button className={'tool small-btn' + (!project.icon ? ' on' : '')} onClick={() => dispatch({ t: 'patchProject', id: project.id, patch: { icon: null } })}>Punto de color</button>
+      </div>
       <div className="tabs ap-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'board'} className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>Tablero</button>
         <button role="tab" aria-selected={tab === 'cards'} className={tab === 'cards' ? 'on' : ''} onClick={() => setTab('cards')}>Tarjetas</button>

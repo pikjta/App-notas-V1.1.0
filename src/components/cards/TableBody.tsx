@@ -7,8 +7,9 @@ import { useApp } from '../../App';
 import type { TableCard } from '../../lib/model';
 import { uid } from '../../lib/model';
 import { FormulaErrorDialog } from '../FormulaErrorDialog';
+import { FUNCTION_HELP } from '../../lib/formula';
 import { calcCell, cellName, isFormula, showValue } from '../../lib/tablecalc';
-import { allOf, inRect, isAll, isSingle, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../../lib/grid';
+import { allOf, GRID_MIME, inRect, isAll, isSingle, parseTsv, pastePlan, rectOf, step, suggest, toTsv } from '../../lib/grid';
 import type { Pos, Sel } from '../../lib/grid';
 
 type Edit = { pos: Pos; text: string; orig: string };
@@ -33,7 +34,10 @@ export function TableBody({ card }: { card: TableCard }) {
   const dims = { minRow: -1, rows: card.rows.length, cols: card.heads.length };
   const valueAt = (r: number, c: number) => (r < 0 ? card.heads[c] : card.rows[r]?.cells[c]) ?? '';
   const fmtAt = (r: number, c: number): CellFmt | undefined => (r < 0 ? card.headFmt?.[c] : card.rows[r]?.fmt?.[c]) ?? undefined;
-  const matrix = (s: Sel) => { const rc = rectOf(s); const m: string[][] = []; for (let r = rc.r0; r <= rc.r1; r++) { const line: string[] = []; for (let c = rc.c0; c <= rc.c1; c++) line.push(valueAt(r, c)); m.push(line); } return m; };
+  // Al copiar se lleva el resultado de las fórmulas (no la fórmula), así se puede pegar en cualquier otra tabla.
+  const copyAt = (r: number, c: number) => { const v = valueAt(r, c); return isFormula(v) ? showValue(calcCell(card, r, c).value) : v; };
+  const matrix = (s: Sel, forCopy = false) => { const rc = rectOf(s); const m: string[][] = []; for (let r = rc.r0; r <= rc.r1; r++) { const line: string[] = []; for (let c = rc.c0; c <= rc.c1; c++) line.push(forCopy ? copyAt(r, c) : valueAt(r, c)); m.push(line); } return m; };
+  const putClip = (dt: DataTransfer | null, s: Sel) => { if (!dt) return; dt.setData('text/plain', toTsv(matrix(s, true))); if (rectOf(s).r0 < 0) dt.setData(GRID_MIME, 'header'); };
 
   // Sin editar, el foco está en un cuadro oculto: así copiar, cortar, pegar y el teclado funcionan igual en todos los sistemas.
   useLayoutEffect(() => { if (sel && !edit) proxy.current?.focus({ preventScroll: true }); }, [sel, edit]);
@@ -156,7 +160,7 @@ export function TableBody({ card }: { card: TableCard }) {
         return <FormatBar align fmts={cells.map((x) => fmtAt(x.r, x.c))} disabled={!cells.length} label="Formato de las celdas"
           onPatch={(patch) => dispatch({ t: 'tableFormat', card: card.id, cells, patch })} onAfter={() => proxy.current?.focus({ preventScroll: true })} />;
       })()}
-      {sel && <div className="tbl-fbar" aria-label="Celda activa"><b>{cellName(sel.b.r, sel.b.c)}</b><span className="fx">ƒx</span><code>{valueAt(sel.b.r, sel.b.c)}</code></div>}
+      {sel && <div className="tbl-fbar" aria-label="Celda activa"><b>{cellName(sel.b.r, sel.b.c)}</b><span className="fx">ƒx</span><code title={FUNCTION_HELP}>{valueAt(sel.b.r, sel.b.c)}</code></div>}
       <table className="tbl">
         <thead>
           <tr>
@@ -187,8 +191,8 @@ export function TableBody({ card }: { card: TableCard }) {
       <button className="link small" onClick={() => { const id = uid('row'); dispatch({ t: 'tableAddRow', card: card.id, id }); select({ r: card.rows.length, c: 0 }); }}>+ Nueva fila</button>
       <textarea ref={proxy} className="grid-proxy" tabIndex={-1} aria-label="Celdas seleccionadas (para copiar, cortar o pegar)" onKeyDown={onProxyKey}
         onChange={(e) => { e.currentTarget.value = ''; }}
-        onCopy={(e) => { if (!sel) return; e.preventDefault(); e.clipboardData?.setData('text/plain', toTsv(matrix(sel))); }}
-        onCut={(e) => { if (!sel) return; e.preventDefault(); e.clipboardData?.setData('text/plain', toTsv(matrix(sel))); clear(sel); }}
+        onCopy={(e) => { if (!sel) return; e.preventDefault(); putClip(e.clipboardData, sel); }}
+        onCut={(e) => { if (!sel) return; e.preventDefault(); putClip(e.clipboardData, sel); clear(sel); }}
         onPaste={(e) => {
           if (!sel) return;
           const text = e.clipboardData?.getData('text/plain') ?? '';

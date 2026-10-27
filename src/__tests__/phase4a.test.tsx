@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import { typeNote } from './noteutil';
 import App from '../App';
 
 afterEach(cleanup);
@@ -16,9 +17,9 @@ describe('Fase 4a en la interfaz', () => {
     await user.click(screen.getByText('+ Añadir tarjeta'));
     await user.click(screen.getByRole('menuitem', { name: 'Nota' }));
     await user.type(screen.getAllByPlaceholderText('Sin título').slice(-1)[0], 'Brief');
-    await user.click(screen.getByText('Nota vacía. Haz clic para escribir en Markdown.'));
-    await user.type(screen.getByLabelText('Contenido de la nota (Markdown)'), 'Ver [[[[Inicio]]');
-    await act(async () => { (screen.getByLabelText('Contenido de la nota (Markdown)') as HTMLTextAreaElement).blur(); });
+    const ed = screen.getByRole('textbox', { name: 'Contenido de la nota' });
+    typeNote(ed, 'Ver [[Inicio]]');
+    await act(async () => { ed.blur(); });
 
     await user.click(screen.getByText('Grafo'));
     const svg = screen.getByRole('img', { name: /Grafo con \d+ nodos/ });

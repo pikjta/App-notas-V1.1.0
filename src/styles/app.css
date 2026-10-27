@@ -969,3 +969,22 @@ button.pm-formula.err { border: 0; background: transparent; font: inherit; width
 .tbl-text.formula { font-variant-numeric: tabular-nums; }
 .tbl-text.err { color: #c8372d; font-weight: 700; cursor: help; }
 .tbl-err { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+
+/* Nota con texto enriquecido */
+.note-rich { min-height: 80px; outline: none; font-size: 14.5px; line-height: 1.55; cursor: text; border-radius: 8px; padding: 2px; }
+.note-rich:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.note-rich[data-empty] > div:first-child::before { content: attr(data-ph); color: var(--card-muted); }
+.note-rich > div { position: relative; min-height: 1.55em; margin: 1px 0; }
+.note-rich > div[data-k="h1"] { font-family: var(--serif); font-size: 20px; font-weight: 600; margin-top: 6px; }
+.note-rich > div[data-k="h2"] { font-family: var(--serif); font-size: 17px; font-weight: 600; margin-top: 6px; }
+.note-rich > div[data-k="h3"] { font-family: var(--serif); font-size: 15px; font-weight: 600; margin-top: 4px; }
+.note-rich > div[data-k="quote"] { padding-left: 12px; border-left: 3px solid var(--accent); color: var(--card-muted); }
+.note-rich > div[data-k="hr"] { padding: 6px 0; }
+.note-rich > div[data-k="hr"] hr { border: 0; border-top: 1px solid var(--card-line); width: 100%; margin: 0; }
+.note-rich > div[data-k="li"], .note-rich > div[data-k="ol"], .note-rich > div[data-k="task"] { padding-left: 20px; }
+.note-rich .rn-mark { position: absolute; left: 0; color: var(--card-muted); user-select: none; cursor: default; min-width: 16px; }
+.note-rich > div[data-k="task"] .rn-mark { cursor: pointer; color: var(--accent); }
+.note-rich > div[data-k="task"][data-done] { text-decoration: line-through; color: var(--card-muted); }
+.note-rich code { background: var(--card-soft); border-radius: 5px; padding: 1px 5px; font-size: 0.92em; }
+.note-rich a.ext { color: #2b6cb0; text-decoration: underline; cursor: pointer; }
+.note-rich .wiki { color: var(--accent); font-weight: 600; cursor: pointer; border-bottom: 1px dotted currentColor; }

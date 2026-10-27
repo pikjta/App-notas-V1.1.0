@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
+import { typeNote } from './noteutil';
 import App from '../App';
 
 afterEach(cleanup);
@@ -13,7 +14,6 @@ async function start(kind: 'Checklist' | 'Tabla' | 'Nota') {
   await user.click(screen.getByRole('menuitem', { name: kind }));
   return user;
 }
-const btn = (name: string) => screen.getAllByLabelText(name).slice(-1)[0];
 
 describe('Barra de formato (mejora 1.1.0, fase 5)', () => {
   it('Checklist: negrita, color y quitar formato en la tarea activa y en una selección', async () => {
@@ -92,15 +92,16 @@ describe('Barra de formato (mejora 1.1.0, fase 5)', () => {
     expect(view().getAttribute('style') ?? '').toBe('');
   }, 30_000);
 
-  it('Nota: la barra se ve siempre y un botón abre la nota para editar', async () => {
-    const user = await start('Nota');
-    const bar = () => screen.getAllByRole('button', { name: 'Título' }).slice(-1)[0];
-    expect(bar()).toBeTruthy();
-    expect(document.querySelector('textarea[aria-label="Contenido de la nota (Markdown)"]')).toBeNull();
-    fireEvent.click(btn('Código')); // sin editar: abre y pone las marcas
-    const ta = await screen.findByLabelText('Contenido de la nota (Markdown)') as HTMLTextAreaElement;
-    expect(ta.value).toContain('``');
-    await user.keyboard('x');
-    expect(ta.value).toContain('`x`');
+  it('Nota: texto sin sintaxis y la barra aplica el formato a la selección', async () => {
+    await start('Nota');
+    const ed = screen.getAllByRole('textbox', { name: 'Contenido de la nota' }).slice(-1)[0];
+    expect(screen.getAllByRole('button', { name: 'Título' }).slice(-1)[0]).toBeTruthy();
+    typeNote(ed, 'Hola mundo');
+    const t = ed.querySelector('[data-k="p"]')!.lastChild as Text;
+    const r = document.createRange(); r.setStart(t, 5); r.setEnd(t, 10);
+    const s = window.getSelection()!; s.removeAllRanges(); s.addRange(r);
+    fireEvent.click(screen.getAllByTitle('Negrita (⌘B)').slice(-1)[0]);
+    expect(ed.querySelector('strong')!.textContent).toBe('mundo');
+    expect(ed.textContent).toBe('Hola mundo'); // no se ven asteriscos
   }, 30_000);
 });

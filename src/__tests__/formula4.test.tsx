@@ -50,16 +50,18 @@ describe('Fórmulas con referencias (mejora 1.1.0, fase 4)', () => {
     await user.keyboard('Uno');
     expect(dlg.querySelector('th[data-letter="A"]')).not.toBeNull();
     await user.click(within(dlg).getByText('+ Nueva columna'));
-    await user.click(within(document.querySelector('.pm-pop') as HTMLElement).getByText(/Fórmula/));
-    await user.click(within(dlg).getByText('Fórmula', { selector: '.th-in span' }));
-    const pop = () => document.querySelector('.pm-pop') as HTMLElement;
-    await user.type(within(pop()).getByLabelText('Fórmula'), 'A1 + Z9');
-    await user.keyboard('{Escape}');
+    await user.click(within(document.querySelector('.pm-pop') as HTMLElement).getByText(/Número/));
+    const mine = () => [...dlg.querySelectorAll('td[data-r="0"]')].slice(-1)[0] as HTMLElement;
+    await user.click(mine());
+    await user.keyboard('=A2*2{Enter}'); // A2 = «Uno»: no es un número
+    expect(mine().querySelector('button.err')).not.toBeNull();
+    await user.click(mine());
+    await user.keyboard('=Z9{Enter}');
     const err = within(dlg).getByRole('button', { name: /Error/ });
     await user.click(err);
     const ex = screen.getByRole('dialog', { name: 'Error en la fórmula' });
     expect(ex.textContent).toContain('No existe la columna Z');
-    expect(ex.textContent).toContain('fila 1');
+    expect(ex.textContent).toContain('fila 2');
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: 'Error en la fórmula' })).toBeNull();
     expect(screen.getByRole('dialog', { name: /Tabla PM/ })).toBeTruthy(); // la tabla sigue abierta
