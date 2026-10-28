@@ -19,7 +19,7 @@ export const copyValue = (pm: Pm, col: Col, row: Row, tags: Opt[]) => exportValu
 export function pasteValue(col: Col, raw: string, tags: Opt[], pm?: Pm): { value: CellVal } | null {
   const t = raw.trim();
   // Un texto que empieza por «=» es una fórmula (solo en columnas de texto y número).
-  if (pm && (col.type === 'text' || col.type === 'number') && t.startsWith('=')) return { value: toCellFormula(pm, t) };
+  if (pm && col.type === 'number' && t.startsWith('=')) return { value: toCellFormula(pm, t) };
   switch (col.type) {
     case 'text': return { value: raw };
     case 'number': { if (!t) return { value: null }; const n = parseNumber(t); return n === null ? null : { value: n }; }

@@ -43,8 +43,7 @@ function resolve(t: Grid, ref: Ref): { c: number; r: number } {
   if (c < 0 || c >= t.heads.length) throw new Error(`No existe la columna ${ref.col}. La tabla llega hasta la ${cellName(0, t.heads.length - 1).replace(/\d+/, '')}.`);
   if (ref.row === 0) return { c, r: -2 };
   const r = ref.row - 2;
-  if (r >= t.rows.length) throw new Error(`No existe la fila ${ref.row}. La tabla llega hasta la fila ${t.rows.length + 1}.`);
-  return { c, r };
+  return { c, r }; // más allá de la última fila vale vacío, como en Excel
 }
 
 function run(t: Grid, text: string, depth: number, stack: Set<string>): FVal {
@@ -52,12 +51,12 @@ function run(t: Grid, text: string, depth: number, stack: Set<string>): FVal {
   if (!src.trim()) return null;
   const today = new Date().toISOString().slice(0, 10);
   return runFormula(src, (name) => { throw new Error(`En la tabla las celdas se citan como B2, no como {${name}}.`); }, today, {
-    cell: (ref) => { const p = resolve(t, ref); if (p.r === -2) throw new Error('Una columna entera (como B:B) solo se puede usar dentro de una función, por ejemplo suma(B:B).'); return evalAt(t, p.r, p.c, depth, stack); },
+    cell: (ref) => { const p = resolve(t, ref); if (p.r === -2) throw new Error('Una columna entera (como B:B) solo se puede usar dentro de una función, por ejemplo suma(B:B).'); if (p.r >= t.rows.length) return null; return evalAt(t, p.r, p.c, depth, stack); },
     range: (a, b) => {
       const A = resolve(t, a), B = resolve(t, b);
       const c0 = Math.min(A.c, B.c), c1 = Math.max(A.c, B.c);
       const whole = A.r === -2 || B.r === -2;
-      const r0 = whole ? -1 : Math.min(A.r, B.r), r1 = whole ? t.rows.length - 1 : Math.max(A.r, B.r);
+      const r0 = whole ? -1 : Math.min(A.r, B.r), r1 = whole ? t.rows.length - 1 : Math.min(t.rows.length - 1, Math.max(A.r, B.r));
       const out: FVal[] = [];
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) out.push(evalAt(t, r, c, depth, stack));
       return out;

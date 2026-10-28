@@ -888,7 +888,8 @@ const letterIndex = (l: string) => l.toUpperCase().split('').reduce((n, ch) => n
 export const rowNumber = (pm: Pm, id: string) => { const i = pm.rows.findIndex((r) => r.id === id); return i < 0 ? 0 : i + 2; };
 
 const NO_CELL = 'La referencia apunta a una celda que ya no existe (se borró su fila o su columna).';
-type Target = { col: Col; row: Row | null; head: boolean };
+/** `beyond`: fila escrita con número que está más allá de la última (como en Excel, vale vacío). */
+type Target = { col: Col; row: Row | null; head: boolean; beyond?: number };
 /** Columna y fila a las que apunta una referencia (`row: null` y `head: false` = columna entera). */
 function resolveRef(pm: Pm, r: Ref): Target {
   const col = r.k === 'id' ? pm.cols.find((c) => c.id === r.c) : pm.cols[letterIndex(r.col)];
@@ -896,7 +897,7 @@ function resolveRef(pm: Pm, r: Ref): Target {
   if (r.k === 'id' ? r.r === '*' : r.row === 0) return { col, row: null, head: false };
   if (r.k === 'id' ? r.r === '^' : r.row === 1) return { col, row: null, head: true };
   const row = r.k === 'id' ? pm.rows.find((x) => x.id === r.r) : pm.rows[r.row - 2];
-  if (!row) throw new Error(r.k === 'id' ? NO_CELL : `No existe la fila ${r.row}. La tabla llega hasta la fila ${pm.rows.length + 1}.`);
+  if (!row) { if (r.k === 'id') throw new Error(NO_CELL); return { col, row: null, head: false, beyond: r.row - 2 }; }
   return { col, row, head: false };
 }
 
@@ -925,8 +926,8 @@ export function displayExpr(pm: Pm, stored: string): string {
   });
 }
 
-/** ¿La celda contiene una fórmula escrita al estilo Excel («=SUMA(A2:A9)»)? Solo en columnas de texto y número. */
-export const isCellFormula = (col: Col, v: CellVal | undefined): boolean => (col.type === 'text' || col.type === 'number') && typeof v === 'string' && v.startsWith('=');
+/** ¿La celda contiene una fórmula escrita al estilo Excel («=SUMA(A2:A9)»)? Solo en columnas de número. */
+export const isCellFormula = (col: Col, v: CellVal | undefined): boolean => col.type === 'number' && typeof v === 'string' && v.startsWith('=');
 /** La fórmula de una celda como la escribe el usuario (con letras y números). */
 export const formulaText = (pm: Pm, v: string) => '=' + displayExpr(pm, v.slice(1));
 /** Texto escrito por el usuario → lo que se guarda en la celda (la fórmula, por identidad). */
@@ -959,6 +960,7 @@ function evalExpr(pm: Pm, expr: string, col: Col, row: Row, tags: Opt[], depth: 
       cell: (ref) => {
         const t = resolveRef(pm, ref);
         if (t.head) return t.col.name;
+        if (t.beyond !== undefined) return null;
         if (!t.row) throw new Error('Una columna entera (como B:B) solo se puede usar dentro de una función, por ejemplo suma(B:B).');
         return read(t.col, t.row);
       },
@@ -966,10 +968,10 @@ function evalExpr(pm: Pm, expr: string, col: Col, row: Row, tags: Opt[], depth: 
         const A = resolveRef(pm, a), B = resolveRef(pm, b);
         const c0 = Math.min(pm.cols.indexOf(A.col), pm.cols.indexOf(B.col)), c1 = Math.max(pm.cols.indexOf(A.col), pm.cols.indexOf(B.col));
         // Índice de fila: -1 = cabecera; una columna entera abarca todas las filas.
-        const whole = (t: Target) => !t.row && !t.head;
-        const ix = (t: Target) => (t.head ? -1 : pm.rows.indexOf(t.row!));
+        const whole = (t: Target) => !t.row && !t.head && t.beyond === undefined;
+        const ix = (t: Target) => (t.head ? -1 : t.beyond !== undefined ? t.beyond : pm.rows.indexOf(t.row!));
         const all = whole(A) || whole(B);
-        const r0 = all ? -1 : Math.min(ix(A), ix(B)), r1 = all ? pm.rows.length - 1 : Math.max(ix(A), ix(B));
+        const r0 = all ? -1 : Math.min(ix(A), ix(B)), r1 = all ? pm.rows.length - 1 : Math.min(pm.rows.length - 1, Math.max(ix(A), ix(B)));
         const out: FVal[] = [];
         for (let ri = r0; ri <= r1; ri++) {
           for (let ci = c0; ci <= c1; ci++) {

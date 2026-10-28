@@ -57,7 +57,7 @@ describe('referencias tipo Excel en la Tabla PM (la fila 1 son las cabeceras)', 
   });
   it('detecta círculos y celdas fuera de la tabla', () => {
     expect(val(sample('suma(B:D)')).error).toContain('circular');
-    expect(val(sample('B9')).error).toContain('No existe la fila 9');
+    expect(val(sample('B9')).error).toBeNull(); // más allá de la última fila vale vacío, como en Excel
     expect(val(sample('Z1')).error).toContain('No existe la columna Z');
     expect(val(sample('B3:B4')).error).toContain('dentro de una función');
   });
@@ -85,8 +85,8 @@ describe('fórmulas escritas en la celda (columnas de número y de texto)', () =
     expect(cellText(pm, pm.cols[1], pm.rows[0], [])).toBe('25');
     pm = put(pm, 'r1', 'cPrecio', '=Y(B3=20;C3=3)');
     expect(cellFormula(pm, pm.cols[1], pm.rows[0], [])!.value).toBe(true);
-    pm = put(pm, 'r1', 'cNombre', '=CONCATENAR(A3;"-";MAYUSC(A4))');
-    expect(cellText(pm, pm.cols[0], pm.rows[0], [])).toBe('b-C');
+    pm = put(pm, 'r1', 'cPrecio', '=CONCATENAR(A3;"-";MAYUSC(A4))');
+    expect(cellFormula(pm, pm.cols[1], pm.rows[0], [])!.value).toBe('b-C');
     pm = put(pm, 'r1', 'cPrecio', '=B2');
     expect(cellFormula(pm, pm.cols[1], pm.rows[0], [])!.error).toContain('circular');
   });
@@ -119,7 +119,7 @@ describe('operaciones en la tarjeta Tabla', () => {
   it('errores: círculo, fuera de la tabla, texto en una cuenta', () => {
     const e = (cells: string[]) => calcCell({ heads: ['A', 'B'], rows: [{ id: '1', cells }] }, 0, 1).error;
     expect(e(['', '=B2'])).toContain('circular');
-    expect(e(['', '=A9'])).toContain('No existe la fila 9');
+    expect(e(['', '=A9'])).toBeNull();
     expect(e(['hola', '=A2*2'])).toContain('no es un número');
     expect(e(['1', '=A2/0'])).toContain('cero');
   });
