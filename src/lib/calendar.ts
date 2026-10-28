@@ -53,7 +53,7 @@ export function moveAnchor(anchor: string, view: CalView, dir: 1 | -1): string {
 
 export function titleFor(anchor: string, view: CalView, weekStart: 0 | 1): string {
   const d = fromDayKey(anchor);
-  if (view === 'month') return `${monthName(d.getMonth())} de ${d.getFullYear()}`;
+  if (view === 'month') return `${monthName(d.getMonth())} ${d.getFullYear()}`;
   if (view === 'day') return d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   if (view === 'agenda') return 'Agenda';
   const w = weekDays(anchor, weekStart);
