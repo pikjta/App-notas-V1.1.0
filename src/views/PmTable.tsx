@@ -578,14 +578,12 @@ function NumberCell({ id, pm, col, v, display, set, onKey, auto = false, style }
   );
 }
 
-/** Texto de una celda de texto: si empieza por «=» es una fórmula y se muestra con letras y números (B2). */
-function TextInput({ id, pm, col, v, set, onKey, auto, style }: { id: string; pm: Pm; col: Col; v: CellVal | undefined; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto: boolean; style?: React.CSSProperties }) {
-  const [typed, setTyped] = useState<string | null>(null);
-  const isF = typeof v === 'string' && v.startsWith('=');
+/** Texto de una celda de texto (las fórmulas «=» solo existen en las columnas de número). */
+function TextInput({ id, col, v, set, onKey, auto, style }: { id: string; pm?: Pm; col: Col; v: CellVal | undefined; set: (v: CellVal) => void; onKey: (e: React.KeyboardEvent) => void; auto: boolean; style?: React.CSSProperties }) {
   return (
-    <input id={id} className="pm-in" value={typed ?? (isF ? formulaText(pm, v as string) : typeof v === 'string' ? v : '')}
-      onChange={(e) => { const t = e.target.value; if (t.startsWith('=')) { setTyped(t); set(toCellFormula(pm, t)); } else { setTyped(null); set(t); } }}
-      onBlur={() => setTyped(null)} onKeyDown={onKey} aria-label={col.name} autoFocus={auto} onFocus={auto ? caretEnd : undefined} style={style} />
+    <input id={id} className="pm-in" value={typeof v === 'string' ? v : ''}
+      onChange={(e) => set(e.target.value)}
+      onKeyDown={onKey} aria-label={col.name} autoFocus={auto} onFocus={auto ? caretEnd : undefined} style={style} />
   );
 }
 

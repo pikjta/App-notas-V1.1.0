@@ -265,7 +265,7 @@ export function CardFrame({ card, flash, linkTarget = false, onHeight, onLinkSta
   const start = (e: RPointerEvent, mode: Drag['mode']) => {
     if (e.button !== 0 || fixed) return;
     const t = e.target as HTMLElement;
-    if (mode === 'move' && t.closest('button, input, textarea, select, label, a, .note-view, .tbl-wrap, .sketch-area, .image-body img, .link-dot')) return;
+    if (mode === 'move' && t.closest('button, input, textarea, select, label, a, .note-view, .note-rich, .tbl-wrap, .sketch-area, .image-body img, .link-dot')) return;
     e.preventDefault();
     dispatch({ t: 'raiseCard', id: card.id });
     const sx = e.clientX, sy = e.clientY;
