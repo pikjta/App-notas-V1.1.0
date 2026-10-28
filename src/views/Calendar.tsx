@@ -2,7 +2,7 @@ import { formatClock } from '../lib/notify';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as RPointerEvent } from 'react';
 import { useApp } from '../App';
-import { dayKey, fromDayKey, shiftDay } from '../lib/agenda';
+import { dayKey, fromDayKey, monthName, shiftDay } from '../lib/agenda';
 import { daysBetween, hm, itemsBetween, layoutDay, monthGrid, moveAnchor, onDay, shiftIso, titleFor, WEEKDAY_SHORT, weekDays } from '../lib/calendar';
 import type { CalItem } from '../lib/calendar';
 import { COUNTRIES, holidays } from '../lib/holidays';
@@ -12,6 +12,8 @@ import { CAL_COLORS, uid } from '../lib/model';
 import type { CalEvent, CalView, Calendar as Cal, Repeat } from '../lib/model';
 import { CalendarPanel } from '../components/Appearance';
 import { BOARD_COLORS, CARD_THEMES, SIDE_COLORS } from '../lib/appearance';
+import { Icon } from '../components/Icon';
+import { normalizeColorIcon } from '../lib/icons';
 
 const PX = 0.8; // píxeles por minuto en las vistas de día y semana (48 px por hora)
 const VIEWS: [CalView, string][] = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes']];
@@ -36,6 +38,16 @@ export function CalendarView() {
   const today = dayKey(new Date());
   const [draft, setDraft] = useState<Draft | null>(null);
   const [newCal, setNewCal] = useState(false);
+  const [setOpen, setSetOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const popRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!listOpen) return;
+    const d = (e: MouseEvent) => { if (!popRef.current?.contains(e.target as Node)) setListOpen(false); };
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && setListOpen(false);
+    window.addEventListener('mousedown', d); window.addEventListener('keydown', k);
+    return () => { window.removeEventListener('mousedown', d); window.removeEventListener('keydown', k); };
+  }, [listOpen]);
 
   // Rango visible para calcular los elementos una sola vez.
   const range = useMemo(() => {
@@ -137,59 +149,90 @@ export function CalendarView() {
   return (
     <main className={'board view cal-view tex-' + look.bg.texture} style={lookVars}>
       <header className="cal-head">
-        <h1 className="board-title cap">{titleFor(anchor, view, ws)}</h1>
-        <div className="row wrap">
-          <button className="tool" onClick={() => dispatch({ t: 'calGo', anchor: today })}>Hoy</button>
-          <button className="tool" aria-label="Anterior" onClick={() => dispatch({ t: 'calGo', anchor: moveAnchor(anchor, view, -1) })}>‹</button>
-          <button className="tool" aria-label="Siguiente" onClick={() => dispatch({ t: 'calGo', anchor: moveAnchor(anchor, view, 1) })}>›</button>
+        <div className="cal-titles">
+          <span className="cal-crumb">Vista · Calendario</span>
+          <h1 className="board-title cap">{titleFor(anchor, view, ws)}</h1>
+          <span className="cal-sub">{view === 'agenda' ? 'Los próximos 30 días de los calendarios visibles' : 'Recordatorios y notas de los calendarios visibles'}</span>
+        </div>
+        <div className="row cal-nav">
           <div className="seg">{VIEWS.map(([v, l]) => <button key={v} className={view === v ? 'on' : ''} onClick={() => dispatch({ t: 'calView', view: v })}>{l}</button>)}</div>
-          <button className={'tool' + (view === 'agenda' ? ' on' : '')} aria-pressed={view === 'agenda'} onClick={() => dispatch({ t: 'calView', view: 'agenda' })}>Agenda</button>
-          <button className="tool" onClick={() => setLookOpen(true)}>Apariencia</button>
-          <button className="primary" onClick={() => openNew(view === 'day' ? anchor : today, 9 * 60)}>+ Añadir recordatorio</button>
+          <button className="tool" onClick={() => dispatch({ t: 'calGo', anchor: today })}>Hoy</button>
+          <button className={'tool' + (view === 'agenda' ? ' on' : '')} aria-pressed={view === 'agenda'} onClick={() => dispatch({ t: 'calView', view: view === 'agenda' ? state.settings.calView === 'agenda' ? 'month' : state.settings.calView : 'agenda' })}>Agenda</button>
+          <button className="tool cal-arrow" aria-label="Anterior" onClick={() => dispatch({ t: 'calGo', anchor: moveAnchor(anchor, view, -1) })}>‹</button>
+          <button className="tool cal-arrow" aria-label="Siguiente" onClick={() => dispatch({ t: 'calGo', anchor: moveAnchor(anchor, view, 1) })}>›</button>
         </div>
       </header>
-      <p className="small muted cal-help">Arrastra un recordatorio para cambiarlo de día u hora. Los festivos aparecen resaltados.</p>
       <div className="cal-body">
         <aside className="cal-side">
-          <MiniMonth anchor={anchor} today={today} weekStart={ws} onPick={(k) => dispatch({ t: 'calGo', anchor: k })} />
+          <button className="cal-add" onClick={() => openNew(view === 'day' ? anchor : today, 9 * 60)}>+ Añadir recordatorio</button>
+          <MiniMonth anchor={anchor} today={today} weekStart={ws} view={view} onPick={(k) => dispatch({ t: 'calGo', anchor: k })} />
           <div className="cal-legend">
-            <span className="menu-label">En pantalla</span>
-            {state.calendars.filter((c) => c.visible).map((c) => <span key={c.id} className="small"><i className="dot" style={{ background: c.color }} /> {c.name}</span>)}
+            <span className="cal-legend-title">En pantalla</span>
+            {state.calendars.filter((c) => c.visible).map((c) => <span key={c.id} className="cal-legend-row"><i className="dot" style={{ background: c.color }} /> {c.name}</span>)}
+            <p className="cal-help">Arrastra un recordatorio para cambiarlo de día u hora. Los festivos aparecen resaltados.</p>
           </div>
-          <CalList onNew={() => setNewCal(true)} />
-          <CalSettings onExport={exportCal} onImport={importIcs} />
         </aside>
-        <section className="cal-main">
+        <section className={'cal-main' + (view === 'month' ? ' plain' : '')}>
           {view === 'month' && <MonthGrid items={items} today={today} onNew={(k) => openNew(k, null)} onOpen={openItem} onMove={move} />}
           {(view === 'week' || view === 'day') && <TimeGrid days={view === 'week' ? weekDays(anchor, ws) : [anchor]} items={items} today={today} onNew={openNew} onOpen={openItem} onMove={move} />}
           {view === 'agenda' && <Agenda from={anchor} items={items} today={today} onOpen={openItem} />}
         </section>
       </div>
+      <footer className="cal-foot">
+        <span className="cal-showing">{state.calendars.some((c) => c.visible) ? 'Mostrando: ' + state.calendars.filter((c) => c.visible).map((c) => c.name).join(' + ') : 'Ningún calendario visible'}</span>
+        <div className="cal-pop-anchor" ref={popRef}>
+          <button className="tool" aria-expanded={listOpen} title="Elige qué calendarios se superponen" onClick={() => setListOpen(!listOpen)}>
+            <span className="cal-dots">{state.calendars.filter((c) => c.visible).map((c) => <i key={c.id} style={{ background: c.color }} />)}</span> Calendarios <span aria-hidden>⌃</span>
+          </button>
+          {listOpen && <div className="cal-pop"><CalList /></div>}
+        </div>
+        <button className="tool" onClick={() => setNewCal(true)}>+ Añadir calendario</button>
+        <button className="tool cal-icon" title="Ajustes del calendario" aria-label="Ajustes del calendario" onClick={() => setSetOpen(true)}>⚙</button>
+        <button className="tool cal-icon" title="Apariencia del calendario" aria-label="Apariencia del calendario" onClick={() => setLookOpen(true)}><Icon name={normalizeColorIcon(state.settings.colorIcon)} size={17} /></button>
+      </footer>
       {draft && <EventDialog draft={draft} calendars={userCals} onClose={() => setDraft(null)} />}
       {newCal && <NewCalendar onClose={() => setNewCal(false)} />}
+      {setOpen && <CalSettingsDialog onClose={() => setSetOpen(false)} onExport={exportCal} onImport={importIcs} />}
       {lookOpen && <CalendarPanel onClose={() => setLookOpen(false)} />}
     </main>
   );
 }
 
-function MiniMonth({ anchor, today, weekStart, onPick }: { anchor: string; today: string; weekStart: 0 | 1; onPick: (k: string) => void }) {
+function MiniMonth({ anchor, today, weekStart, view, onPick }: { anchor: string; today: string; weekStart: 0 | 1; view: CalView; onPick: (k: string) => void }) {
+  const { state } = useApp();
   const [month, setMonth] = useState(anchor);
   useEffect(() => setMonth(anchor), [anchor]);
-  const g = monthGrid(month, weekStart);
+  const wn = state.settings.weekNumbers;
+  const all = monthGrid(month, weekStart);
+  const g = all.filter((_, i) => all.slice(Math.floor(i / 7) * 7, Math.floor(i / 7) * 7 + 7).some((d) => d.inMonth));
   const m = fromDayKey(month);
   const go = (n: number) => setMonth(dayKey(new Date(m.getFullYear(), m.getMonth() + n, 1)));
+  const items = useMemo(() => itemsBetween(state, all[0].key, all[41].key), [state, month, weekStart]); // eslint-disable-line react-hooks/exhaustive-deps
+  const a = fromDayKey(anchor);
+  const week = weekDays(anchor, weekStart);
+  const inRange = (k: string) => view === 'month' ? (fromDayKey(k).getMonth() === a.getMonth() && fromDayKey(k).getFullYear() === a.getFullYear()) : view === 'week' ? week.includes(k) : view === 'agenda' ? (k >= anchor && k <= shiftDay(anchor, 29)) : k === anchor;
   return (
     <div className="mini">
-      <div className="row"><b className="grow cap">{m.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</b><button className="icon-btn small" aria-label="Mes anterior" onClick={() => go(-1)}>‹</button><button className="icon-btn small" aria-label="Mes siguiente" onClick={() => go(1)}>›</button></div>
-      <div className="mini-grid">
+      <div className="mini-nav"><button className="icon-btn small" aria-label="Mes anterior" onClick={() => go(-1)}>‹</button><b className="grow cap">{monthName(m.getMonth()) + ' ' + m.getFullYear()}</b><button className="icon-btn small" aria-label="Mes siguiente" onClick={() => go(1)}>›</button></div>
+      <div className={'mini-grid' + (wn ? ' wn' : '')}>
+        {wn && <span className="mini-wd" />}
         {Array.from({ length: 7 }, (_, i) => <span key={i} className="mini-wd">{WEEKDAY_SHORT[(i + weekStart) % 7][0]}</span>)}
-        {g.map((d) => <button key={d.key} className={'mini-d' + (d.inMonth ? '' : ' out') + (d.key === today ? ' today' : '') + (d.key === anchor ? ' sel' : '')} onClick={() => onPick(d.key)}>{fromDayKey(d.key).getDate()}</button>)}
+        {g.flatMap((d, gi) => {
+          const sel = view !== 'month' && d.key === anchor;
+          const has = onDay(items, d.key).length > 0;
+          const cell = (
+            <button key={d.key} className={'mini-d' + (d.inMonth ? '' : ' out') + (d.key === today ? ' today' : '') + (sel ? ' sel' : '') + (!sel && inRange(d.key) ? ' rng' : '')} aria-label={fromDayKey(d.key).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })} onClick={() => onPick(d.key)}>
+              <span>{fromDayKey(d.key).getDate()}</span><i className={has ? 'has' : ''} />
+            </button>
+          );
+          return gi % 7 === 0 && wn ? [<span key={'wk' + d.key} className="mini-wk">{isoWeek(g[Math.min(g.length - 1, gi + 3)].key)}</span>, cell] : [cell];
+        })}
       </div>
     </div>
   );
 }
 
-function CalList({ onNew }: { onNew: () => void }) {
+function CalList() {
   const { state, dispatch } = useApp();
   const [menu, setMenu] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
@@ -218,7 +261,6 @@ function CalList({ onNew }: { onNew: () => void }) {
           </div>
         </div>
       ))}
-      <button className="link small" onClick={onNew}>+ Añadir calendario</button>
     </div>
   );
 }
@@ -252,7 +294,6 @@ function CalSettings({ onExport, onImport }: { onExport: () => void; onImport: (
   const noHolidays = holidays(st.country, new Date().getFullYear()).length === 0;
   return (
     <div className="cal-settings stack small-gap">
-      <span className="menu-label">Ajustes del calendario</span>
       <label className="check-line small"><input type="checkbox" checked={st.weekNumbers} onChange={(e) => set({ weekNumbers: e.target.checked })} /> Números de semana</label>
       <label className="small">La semana empieza el
         <select value={st.weekStart} onChange={(e) => set({ weekStart: Number(e.target.value) as 0 | 1 })}><option value={1}>Lunes</option><option value={0}>Domingo</option></select>
@@ -276,6 +317,17 @@ function CalSettings({ onExport, onImport }: { onExport: () => void; onImport: (
         <p className="muted">Se crea un calendario nuevo con sus eventos.</p>
         <p className="muted">Formato estándar compatible con Google Calendar, Apple Calendar y Outlook. Todo se procesa en tu ordenador.</p>
       </div>
+    </div>
+  );
+}
+
+function CalSettingsDialog({ onClose, onExport, onImport }: { onClose: () => void; onExport: () => void; onImport: () => void }) {
+  return (
+    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <section className="modal ev-dialog" role="dialog" aria-label="Ajustes del calendario" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+        <header className="modal-head"><h2>Ajustes del calendario</h2><span className="grow" /><button className="icon-btn" aria-label="Cerrar" onClick={onClose}>✕</button></header>
+        <div className="modal-body"><CalSettings onExport={onExport} onImport={onImport} /></div>
+      </section>
     </div>
   );
 }
@@ -314,10 +366,9 @@ function useDragMove(onMove: (it: CalItem, days: number, minutes: number) => voi
 }
 
 function Chip({ it, onDown, dragging }: { it: CalItem; onDown: (e: RPointerEvent) => void; dragging: boolean }) {
-  const label = it.allDay ? it.title : `${it.start ? hm(it.start) : ''} ${it.title}`;
   return (
     <div className={'chip-ev ' + it.kind + (it.done ? ' done' : '') + (dragging ? ' ghost' : '')} style={{ ['--c' as string]: it.color }} title={(it.kind === 'holiday' ? 'Festivo · ' : it.kind === 'reminder' ? 'Recordatorio · ' : '') + it.title} onPointerDown={onDown}>
-      {it.kind === 'reminder' && '🔔 '}{label}
+      {!it.allDay && it.start && <b>{hm(it.start)}</b>} {it.title}
     </div>
   );
 }
@@ -326,31 +377,32 @@ function MonthGrid({ items, today, onNew, onOpen, onMove }: { items: CalItem[]; 
   const { state, dispatch } = useApp();
   const ws = state.settings.weekStart;
   const wn = state.settings.weekNumbers;
-  const g = monthGrid(state.cal.anchor, ws);
+  const all = monthGrid(state.cal.anchor, ws);
+  const g = all.filter((_, i) => all.slice(Math.floor(i / 7) * 7, Math.floor(i / 7) * 7 + 7).some((d) => d.inMonth)); // solo las semanas del mes
   const { ghost, start } = useDragMove(onMove, false);
   const noteDays = new Set(state.cards.filter((c) => c.type === 'note' && c.day && !c.trashed).map((c) => (c as { day: string }).day));
+  const goDay = (k: string) => { dispatch({ t: 'calGo', anchor: k }); dispatch({ t: 'calView', view: 'day' }); };
   return (
-    <div className={'month' + (wn ? ' wn' : '')}>
-      {wn && <div className="month-wd" />}
-      {Array.from({ length: 7 }, (_, i) => <div key={i} className="month-wd">{WEEKDAY_SHORT[(i + ws) % 7]}</div>)}
+    <div className={'cg' + (wn ? ' wn' : '')}>
+      {wn && <span />}
+      {Array.from({ length: 7 }, (_, i) => <span key={i} className="cg-wd">{WEEKDAY_SHORT[(i + ws) % 7]}</span>)}
       {g.flatMap((d, gi) => {
         const list = onDay(items, d.key);
         const hol = list.some((x) => x.kind === 'holiday');
-        const shown = list.slice(0, 4);
+        const shown = list.slice(0, 3);
         const cell = (
-          <div key={d.key} data-day={d.key} className={'month-cell' + (d.inMonth ? '' : ' out') + (d.key === today ? ' today' : '') + (hol ? ' holiday' : '') + (ghost?.day === d.key ? ' drop' : '')} onClick={(e) => { if (e.target === e.currentTarget) onNew(d.key); }}>
-            <div className="month-top">
-              <button className="month-num" title="Ver este día" aria-label={'Ver este día ' + d.key} onClick={(e) => { e.stopPropagation(); dispatch({ t: 'calGo', anchor: d.key }); dispatch({ t: 'calView', view: 'day' }); }}>{fromDayKey(d.key).getDate()}</button>
+          <div key={d.key} data-day={d.key} className={'cg-cell' + (d.inMonth ? '' : ' out') + (d.key === today ? ' today' : '') + (hol ? ' holiday' : '') + (ghost?.day === d.key ? ' drop' : '')} onClick={(e) => { if (e.target === e.currentTarget) onNew(d.key); }}>
+            <div className="cg-top">
+              <button className="cg-num" title="Ver este día" aria-label={'Ver este día ' + d.key} onClick={(e) => { e.stopPropagation(); goDay(d.key); }}>{fromDayKey(d.key).getDate()}</button>
               <span className="grow" />
-              {noteDays.has(d.key) && <button className="icon-btn tiny" title="Abrir la nota del día" aria-label="Abrir la nota del día" onClick={(e) => { e.stopPropagation(); dispatch({ t: 'day', day: d.key }); }}>📓</button>}
-              <button className="icon-btn tiny add" title="Añadir nota o recordatorio" aria-label="Añadir nota o recordatorio" onClick={(e) => { e.stopPropagation(); onNew(d.key); }}>+</button>
+              {noteDays.has(d.key) && <button className="cg-ico" title="Abrir la nota del día" aria-label="Abrir la nota del día" onClick={(e) => { e.stopPropagation(); dispatch({ t: 'day', day: d.key }); }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z" /><path d="M9 8h6M9 12h6" /></svg></button>}
+              <button className="cg-ico cg-add" title="Añadir nota o recordatorio" aria-label="Añadir nota o recordatorio" onClick={(e) => { e.stopPropagation(); onNew(d.key); }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg></button>
             </div>
             {shown.map((it) => <Chip key={it.id + d.key} it={it} dragging={ghost?.id === it.id} onDown={(e) => start(e, it, () => onOpen(it))} />)}
-            {list.length > 4 && <span className="small muted more">+{list.length - 4}</span>}
+            {list.length > 3 && <button className="cg-more" onClick={(e) => { e.stopPropagation(); goDay(d.key); }}>+{list.length - 3} más</button>}
           </div>
         );
-        const row = gi % 7 === 0 && wn ? [<div key={'wn' + d.key} className="month-wn">{isoWeek(g[Math.min(41, gi + 3)].key)}</div>] : [];
-        return [...row, cell];
+        return gi % 7 === 0 && wn ? [<span key={'wn' + d.key} className="cg-wn">S{isoWeek(g[Math.min(g.length - 1, gi + 3)].key)}</span>, cell] : [cell];
       })}
     </div>
   );

@@ -599,7 +599,7 @@ function FormulaErr({ pm, col, row, error, formula, num }: { pm: Pm; col: Col; r
 }
 
 function Popover({ pop, pm, card, close, closeTable, op, rows, openImport, openPage, openPop }: { closeTable: () => void; openPop: (k: 'props' | 'rules' | 'csv' | 'col', id?: string) => void; pop: Pop; pm: Pm; card: PmCard; close: () => void; op: (o: PmOp) => void; rows: Row[]; archived: number; openImport: (plan: CsvPlan, name: string) => void; openPage: (id: string) => void }) {
-  const style = pop.kind === 'more' ? { right: 16, top: pop.y } : { left: Math.max(8, pop.x), top: pop.y };
+  const style = pop.kind === 'more' || pop.kind === 'rules' ? { right: 16, top: pop.y } : { left: Math.max(8, pop.x), top: pop.y };
   if (pop.kind === 'import') return <div className="pm-pop menu import" role="dialog" aria-label="Importar CSV"><ImportMenu pm={pm} card={card} plan={pop.plan} name={pop.name} close={close} /></div>;
   let body: ReactNode = null;
   if (pop.kind === 'more') body = <OptionsMenu card={card} close={close} closeTable={closeTable} openPop={openPop} />;
