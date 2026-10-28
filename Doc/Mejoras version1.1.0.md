@@ -133,7 +133,7 @@ Mismo motor que la Tabla (`lib/grid.ts`), aplicado a las celdas de la Tabla PM d
 
 - **Arrastrar tareas** en la barra lateral: dentro de una carpeta, entre carpetas y hacia dentro de una carpeta (línea de inserción arriba/abajo o resaltado de la carpeta). Un clic tras arrastrar no abre la tarea.
 - **Alt+↑ / Alt+↓** suben o bajan la tarea seleccionada en su carpeta.
-- **Icono por tarea:** botón en cada tarea que abre un menú con los 53 iconos y «Punto de color» (el valor por defecto). Campo nuevo `Project.icon`.
+- **Icono por tarea** (desde el apartado 13, en «Personalizar tablero»): menú con los 53 iconos y «Punto de color» (el valor por defecto). Campo nuevo `Project.icon`.
 - Acción nueva `moveProject` en `lib/store.ts` (renumera posiciones y guarda solo los documentos cambiados).
 - Archivos: `components/Sidebar.tsx`, `lib/store.ts`, `lib/model.ts`. Pruebas: `sidebar6.test.tsx`.
 
@@ -161,10 +161,30 @@ Mismo lenguaje de fórmulas en la Tabla PM y en la tarjeta Tabla (`lib/formula.t
 - Archivos nuevos: `lib/tablecalc.ts`, `components/FormulaErrorDialog.tsx`; cambios en `lib/formula.ts`, `lib/pm.ts` (`storeExpr`, `displayExpr`, `colLetter`, `rowNumber`), `views/PmTable.tsx`, `components/cards/TableBody.tsx`, `styles/app.css`. Pruebas: `phase4.test.ts` y `formula4.test.tsx`.
 - Decisiones donde la especificación no decía nada: el número de fila de la Tabla PM sigue el orden de los datos (así no cambia con filtros ni orden); al pegar en la Tabla las referencias no se desplazan; una fórmula de la Tabla no puede usar `{Nombre}`.
 
+## 13 · Detalles de pulido (octubre de 2026)
+
+- **Icono de la tarea:** ya no hay botón en cada tarea de la barra lateral; el icono (53 iconos y «Punto de color») se elige en el menú de **Personalizar tablero**, campo «Icono de la tarea».
+- **Paleta extraída de una imagen:** máximo **8 colores** (antes 6). Archivos: `lib/images.ts`, `lib/graphics.ts`.
+- **Tarjeta Nota sin sintaxis Markdown:** la nota es ahora un editor de texto enriquecido (`lib/richnote.ts`, `components/cards/NoteBody.tsx`). Títulos, negrita, cursiva, tachado, código, listas, casillas, citas y enlaces se ven ya formateados y se aplican con la barra de la propia tarjeta. Internamente se sigue guardando como Markdown, así que enlaces `[[ ]]`, búsqueda, grafo, copias de seguridad y notas diarias no cambian. Teclado: Enter parte el bloque, Retroceso al inicio lo convierte en párrafo, Tab sangra listas, ⌘B/⌘I, Esc sale. Al escribir `[[` se abre el selector de enlaces. Pegar interpreta Markdown; copiar lleva texto Markdown. Pruebas: `richnote.test.ts`, `noteutil.ts`.
+- **Fórmulas por celda en la Tabla PM:** en columnas de Texto y Número, una celda que empieza por «=» es una fórmula como en Excel (`=B2*C3`, `=SUMA(B2:B9)`), se calcula al pulsar Enter o hacer clic fuera, y los errores muestran la ventana explicativa. Se guardan por identidad de fila y columna (como las de la fase 4). Funcionan también en orden, búsqueda, totales y exportación. **Numeración tipo Excel:** la cabecera es la fila 1 y los datos empiezan en la fila 2 (sustituye lo dicho en el apartado 12).
+- **Tipos «Fórmula» y «Resumen» retirados del menú de tipos de columna.** Las columnas que ya existían siguen funcionando.
+- **Funciones disponibles (español o inglés):** SUMA, PROMEDIO, CONTAR, CONTARA, MAX, MIN, SI, Y, O, NO, REDONDEAR, ABS, ENTERO, RAIZ, POTENCIA, RESIDUO, HOY, CONCATENAR, MAYUSC, MINUSC, LARGO. Argumentos separados con `;` o `,`; también `<>`. Referencias: `A1`, `A2:A34`, `A:A`.
+- **Copiar toda la tabla:** Ctrl+A y Ctrl+C copian toda la tabla con los nombres de columna (formato Excel/TSV). Al pegar en otra tabla (Tabla o Tabla PM) que no tenga espacio suficiente, se crean las filas y columnas necesarias (en la Tabla PM, columnas de número o texto con los nombres copiados). Es un solo paso de deshacer.
+- **Decisión:** al copiar una celda con fórmula se copia el **resultado**, no la fórmula, para que sea portable entre tablas.
+- Archivos: `lib/formula.ts`, `lib/pm.ts`, `lib/pmio.ts`, `lib/pmgrid.ts`, `lib/grid.ts`, `views/PmTable.tsx`, `components/cards/TableBody.tsx`, `components/Appearance.tsx`, `components/Sidebar.tsx`, `styles/app.css`.
+
+## 14 · Segunda tanda de pulido (octubre de 2026)
+
+- **Tarjeta Nota editable:** el tablero cancelaba el clic sobre la tarjeta (para poder arrastrarla) y eso impedía dar foco al nuevo editor. Ahora el clic sobre el texto de la nota escribe; la cabecera de la tarjeta sigue arrastrando. Archivo: `components/Board.tsx`. Prueba: `fix7.test.tsx`.
+- **Fórmulas «=» solo en columnas de número** de la Tabla PM (en una columna de texto, «=…» es texto normal). Sustituye lo dicho en el apartado 13 sobre texto y número.
+- **Como en Excel, lo que no existe vale vacío:** una referencia a una fila más allá de la última (`A34`) vale vacío y en un rango (`=SUMA(G2:G34)`) se ignora. Antes daba «No existe la fila…». Vale en la Tabla PM y en la tarjeta Tabla. Una columna que no existe (`Z1`) sigue dando error.
+- Nota: `=A2*B3` da error si A o B no son columnas de número (texto por número), igual que Excel.
+- Archivos: `lib/pm.ts`, `lib/pmgrid.ts`, `lib/tablecalc.ts`, `views/PmTable.tsx`, `components/Board.tsx`.
+
 ## Pendiente
 
-- Probar en tu PC (`npm run tauri dev`): fórmulas en la Tabla y en la Tabla PM, ventana de error, letras en las cabeceras.
+- Probar en tu PC (`npm run tauri dev`): editor de la Nota, fórmulas «=» en la Tabla PM y en la Tabla, ventana de error, copiar toda la tabla y pegarla en otra, icono en Personalizar tablero, paleta de 8 colores.
 
 ## Comprobación
 
-En la nube: `npx tsc --noEmit` sin errores, 189 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.
+En la nube: `npx tsc --noEmit` sin errores, 203 pruebas de Vitest correctas y `npx vite build` correcto. Pendiente en tu PC (no se puede medir en la nube): cómo se ve y se siente el ajuste de líneas, las flechas con texto largo, la selección con el ratón, el selector de color, los iconos de la barra y la capa de Tauri.

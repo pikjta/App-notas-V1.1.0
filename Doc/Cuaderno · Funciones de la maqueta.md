@@ -109,7 +109,7 @@ Cada tarea principal (e Inicio) es un tablero libre donde las tarjetas se coloca
 - Muestra la fecha en grande (mes y día), el tiempo relativo y la fecha completa, con un botón para activar o silenciar el aviso.
 - El selector de fecha ofrece atajos (Hoy, Mañana, En una semana), un calendario mensual, Hora y Minutos, y «Listo».
 
-**Nota.** Texto en Markdown con barra de formato y enlaces `[[ ]]` (ver apartado 5). Si está vacía: «Nota vacía. Haz clic para escribir en Markdown.».
+**Nota.** Texto en Markdown con barra de formato y enlaces `[[ ]]` (ver apartado 5). **En la app** (mejora 1.1.0) la nota es un editor de texto formateado, sin sintaxis Markdown a la vista, que se modifica con la barra de formato de la tarjeta. Si está vacía: «Nota vacía. Haz clic para escribir.».
 
 **Tabla.** Tabla simple con cabeceras editables, «Añadir columna», «Eliminar columna», celdas editables, «+ Nueva fila» y «Eliminar fila». **En la app** (mejora 1.1.0) la tabla se maneja como una hoja de cálculo: clic selecciona, doble clic o escribir edita, las flechas se mueven (Mayús o arrastrar amplían el rango), Ctrl+A elige toda la tabla, Ctrl+C / X / V copian, cortan y pegan rangos (texto con tabuladores, compatible con Excel; la tabla crece al pegar) y al escribir se sugieren palabras de la misma columna. Una celda que empieza por «=» es una fórmula (`=B2*C2`, `=suma(D2:D9)`; A1 es la cabecera de la primera columna): se ve el resultado, una barra superior muestra la celda activa y su contenido, y un error abre una ventana que lo explica.
 
@@ -170,6 +170,8 @@ Gestor de proyectos estilo Notion dentro de una tarjeta. Se abre en grande en un
 Las plantillas propias aparecen con la etiqueta «TUYA» y se pueden eliminar.
 
 **En la app (mejora 1.1.0) · formato, columnas y tareas.** La vista Tabla tiene una barra de formato a la izquierda de «Archivadas»: negrita, cursiva, subrayado, tachado, color de texto, resaltado, alineación y «Quitar formato», aplicados a las celdas seleccionadas (texto, número, fórmula y resumen). Al arrastrar una columna no se selecciona texto y una etiqueta con su nombre sigue al ratón. «Duplicar tabla» cierra la tabla en edición para ver las dos. Copiar y pegar lleva solo el texto.
+
+**En la app (mejora 1.1.0) · fórmulas como en Excel.** En columnas de Número, una celda que empieza por «=» es una fórmula (`=B2*C3`, `=SUMA(B2:B9)`); se calcula con Enter o al hacer clic fuera. La cabecera es la fila 1 y los datos empiezan en la fila 2. Las filas que no existen valen vacío (`=SUMA(A2:A34)` funciona aunque haya menos filas). Los tipos «Fórmula» y «Resumen» ya no se ofrecen. Funciones: SUMA, PROMEDIO, CONTAR, CONTARA, MAX, MIN, SI, Y, O, NO, REDONDEAR, ABS, ENTERO, RAIZ, POTENCIA, RESIDUO, HOY, CONCATENAR, MAYUSC, MINUSC, LARGO. Ctrl+A y Ctrl+C copian toda la tabla con sus cabeceras; al pegar en otra tabla se crean las filas y columnas que falten.
 
 **En la app (mejora 1.1.0) · vista Tabla como hoja de cálculo.** Un clic selecciona una celda; doble clic, F2 o escribir la editan (los menús de estado, selección, etiquetas, fecha, relación e imágenes se abren con doble clic o F2). Flechas, Mayús o arrastrar para elegir un rango, Ctrl+A para toda la tabla, Ctrl+C / X / V para copiar, cortar y pegar rangos con texto separado por tabuladores (cada texto se convierte al tipo de su columna; si se pegan más filas, se añaden), Supr para vaciar, y sugerencias de autocompletado con las palabras de la misma columna en las columnas de texto.
 
@@ -477,7 +479,7 @@ Opcional y desactivado por defecto. Se configura en Ajustes → Seguridad.
   - Esc cierra ventanas y menús.
   - Ctrl+B y Ctrl+I dan negrita y cursiva en las notas.
   - Tab y Mayús+Tab crean o deshacen subtareas en los checklists.
-  - **En la app** (mejora 1.1.0): Alt+↑ / Alt+↓ mueven la tarea seleccionada en la barra lateral, que también admite arrastrar tareas entre carpetas; cada tarea puede tener su propio icono.
+  - **En la app** (mejora 1.1.0): Alt+↑ / Alt+↓ mueven la tarea seleccionada en la barra lateral, que también admite arrastrar tareas entre carpetas; cada tarea puede tener su propio icono, que se elige en «Personalizar tablero».
   - ↑↓ y Enter funcionan en la búsqueda; en la Tabla PM se navega con el teclado.
 
 ## 17. Datos de ejemplo de la maqueta
